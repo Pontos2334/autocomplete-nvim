@@ -1,0 +1,20 @@
+{
+  "name": "autocomplete-nvim-server",
+  "version": "0.1.0",
+  "description": "Autocomplete daemon for autocomplete.nvim",
+  "private": true,
+  "type": "module",
+  "main": "dist/daemon.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/daemon.js",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "diff": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0"
+  }
+}
