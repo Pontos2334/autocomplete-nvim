@@ -9,6 +9,7 @@ M.defaults = {
   filetypes = nil,
   keymaps = {
     accept = "<Tab>",
+    dismiss = "<C-e>",
     trigger = "<C-M-Space>",
     open_audit = nil,
   },

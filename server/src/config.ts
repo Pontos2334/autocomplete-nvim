@@ -20,7 +20,7 @@ export const DEFAULT_OPTIONS: AutocompleteOptions = {
   maxTokens: 256,
   temperature: 0.01,
   topP: 1,
-  stop: ["<锝渆nd鈻乷f鈻乻entence锝?", "```"],
+  stop: ["<|end_of_sentence|>", "```"],
 };
 
 const DEFAULT_MODEL = {

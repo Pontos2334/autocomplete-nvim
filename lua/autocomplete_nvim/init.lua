@@ -8,6 +8,7 @@ local M = {}
 local augroup = vim.api.nvim_create_augroup("autocomplete_nvim", { clear = true })
 local debounce_timer = nil
 local active_completion_id = nil
+local _setup_done = false
 
 local function should_run(bufnr)
   local opts = config.get()
@@ -114,7 +115,55 @@ function M.reload_config()
   end, 3000)
 end
 
+local function clear_keymaps()
+  local keymaps = config.get().keymaps
+  if keymaps.accept then
+    pcall(vim.keymap.del, "i", keymaps.accept)
+  end
+  if keymaps.dismiss then
+    pcall(vim.keymap.del, "i", keymaps.dismiss)
+  end
+  if keymaps.trigger then
+    pcall(vim.keymap.del, "i", keymaps.trigger)
+  end
+  if keymaps.open_audit then
+    pcall(vim.keymap.del, "n", keymaps.open_audit)
+  end
+end
+
+function M.stop()
+  if debounce_timer then
+    debounce_timer:stop()
+    debounce_timer:close()
+    debounce_timer = nil
+  end
+  ghost.clear()
+  if active_completion_id then
+    rpc.request_async("cancel", { completionId = active_completion_id }, function() end, 1000)
+    active_completion_id = nil
+  end
+  rpc.stop()
+  vim.api.nvim_create_augroup("autocomplete_nvim", { clear = true })
+  clear_keymaps()
+  _setup_done = false
+end
+
 function M.setup(opts)
+  if _setup_done then
+    if debounce_timer then
+      debounce_timer:stop()
+      debounce_timer:close()
+      debounce_timer = nil
+    end
+    ghost.clear()
+    if active_completion_id then
+      rpc.request_async("cancel", { completionId = active_completion_id }, function() end, 1000)
+      active_completion_id = nil
+    end
+    clear_keymaps()
+  end
+  _setup_done = true
+
   config.setup(opts)
   rpc.initialize()
   vim.api.nvim_create_autocmd({ "TextChangedI" }, {
@@ -155,11 +204,24 @@ function M.setup(opts)
       if M.accept() then
         return ""
       end
+      local has_cmp = pcall(require, "cmp")
+      if has_cmp then
+        local cmp = require("cmp")
+        if cmp.visible() then
+          cmp.confirm({ select = true })
+          return ""
+        end
+      end
       if keymaps.accept == "<Tab>" then
         return "\t"
       end
       return vim.api.nvim_replace_termcodes(keymaps.accept, true, false, true)
     end, { expr = true, silent = true, desc = "Accept autocomplete.nvim ghost text" })
+  end
+  if keymaps.dismiss then
+    vim.keymap.set("i", keymaps.dismiss, function()
+      ghost.clear()
+    end, { silent = true, desc = "Dismiss autocomplete.nvim ghost text" })
   end
   if keymaps.trigger then
     vim.keymap.set("i", keymaps.trigger, function()
@@ -178,6 +240,10 @@ function M.setup(opts)
   end, {})
   vim.api.nvim_create_user_command("AutocompleteNvimAudit", function()
     M.open_audit()
+  end, {})
+  vim.api.nvim_create_user_command("AutocompleteNvimStop", function()
+    M.stop()
+    util.notify("autocomplete.nvim stopped")
   end, {})
 end
 

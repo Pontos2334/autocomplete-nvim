@@ -8,6 +8,7 @@ local state = {
   pending = {},
   initialized = false,
   stdout_buffer = "",
+  stderr_buffer = "",
 }
 
 local function send_raw(payload)
@@ -43,6 +44,28 @@ local function handle_line(line)
   end
 end
 
+--- Process a channel-lines data array from on_stdout/on_stderr.
+--- Neovim channel-lines semantics: data is a list of strings where
+--- the first element continues the previous partial line, and each
+--- subsequent element is a new complete line. The last element may be
+--- a partial line continued in the next callback. An empty string ""
+--- signals end-of-stream or line termination.
+---@param buf string  existing partial line buffer
+---@param data string[]  lines from on_stdout/on_stderr
+---@param handler fun(line: string)  called for each complete line
+---@return string  new partial line buffer
+local function process_channel_lines(buf, data, handler)
+  if not data or #data == 0 then
+    return buf
+  end
+  buf = buf .. data[1]
+  for i = 2, #data do
+    handler(buf)
+    buf = data[i]
+  end
+  return buf
+end
+
 function M.is_running()
   return state.job_id ~= nil
 end
@@ -60,33 +83,28 @@ function M.start()
     stdout_buffered = false,
     stderr_buffered = false,
     on_stdout = function(_, data)
-      for _, chunk in ipairs(data or {}) do
-        state.stdout_buffer = state.stdout_buffer .. chunk
-        while true do
-          local newline = state.stdout_buffer:find("\n", 1, true)
-          if not newline then
-            break
-          end
-          local line = state.stdout_buffer:sub(1, newline - 1)
-          state.stdout_buffer = state.stdout_buffer:sub(newline + 1)
-          handle_line(line)
-        end
-      end
+      state.stdout_buffer = process_channel_lines(state.stdout_buffer, data, handle_line)
     end,
     on_stderr = function(_, data)
-      local text = table.concat(data or {}, "\n")
-      if text:gsub("%s+", "") ~= "" then
-        util.notify(text, vim.log.levels.DEBUG)
-      end
+      state.stderr_buffer = process_channel_lines(state.stderr_buffer, data, function(line)
+        if line and line:match("%S") then
+          util.notify(line, vim.log.levels.DEBUG)
+        end
+      end)
     end,
     on_exit = function(_, code)
+      local was_running = state.job_id ~= nil
       state.job_id = nil
       state.initialized = false
       state.stdout_buffer = ""
+      state.stderr_buffer = ""
       for _, pending in pairs(state.pending) do
         pending.reject({ message = "server exited with code " .. tostring(code) })
       end
       state.pending = {}
+      if was_running and code ~= 0 then
+        util.notify("Autocomplete server exited unexpectedly (code " .. code .. "). It will restart on next trigger.", vim.log.levels.WARN)
+      end
     end,
   })
   if state.job_id <= 0 then
@@ -100,6 +118,13 @@ end
 function M.request(method, params, timeout_ms)
   if not M.start() then
     return nil, { message = "server not running" }
+  end
+  if not state.initialized and method ~= "initialize" then
+    local init_result, init_err = M.request("initialize", { configPath = config.get().config_path }, 10000)
+    if init_err then
+      return nil, init_err
+    end
+    state.initialized = true
   end
   local id = state.next_id
   state.next_id = state.next_id + 1
@@ -133,7 +158,11 @@ function M.initialize()
     local opts = config.get()
     local result, err = M.request("initialize", { configPath = opts.config_path }, 10000)
     if err then
-      util.notify("initialize failed: " .. (err.message or vim.inspect(err)), vim.log.levels.WARN)
+      util.notify(
+        "initialize failed: " .. (err.message or vim.inspect(err))
+          .. " (node=" .. opts.node_command .. " server=" .. opts.server_path .. ")",
+        vim.log.levels.WARN
+      )
       return
     end
     state.initialized = true
@@ -157,6 +186,7 @@ function M.stop()
     state.job_id = nil
   end
   state.stdout_buffer = ""
+  state.stderr_buffer = ""
 end
 
 return M

@@ -253,7 +253,7 @@ export class AuditManager {
       return;
     }
     if (url.pathname === "/audit/api/stats") {
-      const all = this.store?.list({ limit: 10000 }).records ?? [];
+      const all = this.store?.list({ limit: 1000 }).records ?? [];
       const completed = all.filter((r) => r.status === "completed");
       const avg = completed.length ? Math.round(completed.reduce((sum, r) => sum + (r.durationMs ?? 0), 0) / completed.length) : 0;
       sendJson(res, 200, {

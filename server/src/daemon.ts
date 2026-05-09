@@ -10,10 +10,11 @@ export async function createDaemon(configPath?: string): Promise<{
 }> {
   const config = loadConfig(configPath);
   const audit = new AuditManager(config.audit);
-  await audit.init();
   const handler = new MethodHandler(config, audit);
   const transport = new JsonRpcTransport();
   transport.onMessage((request) => handler.handle(request));
+  transport.start();
+  await audit.init();
   return { transport, handler, audit };
 }
 
@@ -28,7 +29,6 @@ export async function main(): Promise<void> {
   };
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
-  transport.start();
   await new Promise(() => {});
 }
 

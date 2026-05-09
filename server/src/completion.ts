@@ -37,6 +37,7 @@ export interface CompletionAuditDetails {
 export class CompletionEngine {
   private config: AppConfig;
   private cache = new Map<string, string>();
+  private static readonly MAX_CACHE_SIZE = 200;
 
   constructor(config: AppConfig) {
     this.config = config;
@@ -115,6 +116,10 @@ export class CompletionEngine {
       }
       completion = processed;
       if (this.config.options.useCache && !streamState.timedOut) {
+        if (this.cache.size >= CompletionEngine.MAX_CACHE_SIZE) {
+          const firstKey = this.cache.keys().next().value;
+          if (firstKey !== undefined) this.cache.delete(firstKey);
+        }
         this.cache.set(cacheKey, completion);
       }
     } else {
@@ -181,7 +186,6 @@ export class CompletionEngine {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
-          "x-api-key": this.config.model.apiKey,
           Authorization: `Bearer ${this.config.model.apiKey}`,
         },
         signal: controller.signal,
@@ -340,7 +344,7 @@ function processSingleLineCompletion(
   return { completionText: lastLineOfCompletionText };
 }
 
-function postprocessCompletion(completion: string, prefix: string, suffix: string): string | undefined {
+export function postprocessCompletion(completion: string, prefix: string, suffix: string): string | undefined {
   let result = completion;
   if (!result || result.trim().length === 0) return undefined;
   const lineAbove = prefix.split("\n").filter((line) => line.trim()).slice(-1)[0];
@@ -358,7 +362,7 @@ function postprocessCompletion(completion: string, prefix: string, suffix: strin
   return result.trim().length === 0 ? undefined : result;
 }
 
-function shouldCompleteMultiline(mode: string, prefix: string, suffix: string): boolean {
+export function shouldCompleteMultiline(mode: string, prefix: string, suffix: string): boolean {
   if (mode === "always") return true;
   if (mode === "never") return false;
   const currentLine = prefix.split("\n").pop() ?? "";
@@ -368,7 +372,7 @@ function shouldCompleteMultiline(mode: string, prefix: string, suffix: string): 
   return suffix.startsWith("\n") || suffix.trim().length === 0;
 }
 
-function trimDuplicateFollowingLines(completion: string, documentText: string, startLine: number): string {
+export function trimDuplicateFollowingLines(completion: string, documentText: string, startLine: number): string {
   const completionLines = completion.split(/\r?\n/);
   const docLines = documentText.split(/\r?\n/);
   let keep = completionLines.length;
@@ -381,7 +385,7 @@ function trimDuplicateFollowingLines(completion: string, documentText: string, s
   return completionLines.slice(0, keep).join("\n");
 }
 
-function completionDuplicatesFollowingLines(
+export function completionDuplicatesFollowingLines(
   completion: string,
   documentText: string,
   startLine: number,

@@ -19,6 +19,9 @@ function M.remember_visit(bufnr)
   local start_line = math.max(0, line - 20)
   local end_line = math.min(vim.api.nvim_buf_line_count(bufnr), line + 21)
   local content = table.concat(vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false), "\n")
+  if #content > 4000 then
+    content = content:sub(1, 4000)
+  end
   if content:match("%S") then
     table.insert(M.recent_visits, 1, {
       filepath = util.buf_file_uri(bufnr),
