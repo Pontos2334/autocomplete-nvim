@@ -64,7 +64,7 @@ function M.trigger(manual)
         end
         return
       end
-      if result and active_completion_id == result.completionId and vim.api.nvim_get_mode().mode == "i" then
+      if type(result) == "table" and result.completionId and active_completion_id == result.completionId and vim.api.nvim_get_mode().mode == "i" then
         ghost.show(bufnr, result)
       end
     end, 60000)
@@ -116,6 +116,7 @@ function M.reload_config()
 end
 
 local function clear_keymaps()
+  pcall(vim.keymap.del, "i", "<Plug>(autocomplete_nvim_accept)")
   local keymaps = config.get().keymaps
   if keymaps.accept then
     pcall(vim.keymap.del, "i", keymaps.accept)
@@ -199,9 +200,23 @@ function M.setup(opts)
   })
 
   local keymaps = config.get().keymaps
+  -- <Plug> mapping: safe to modify buffer outside textlock
+  vim.keymap.set("i", "<Plug>(autocomplete_nvim_accept)", function()
+    local ok, item = ghost.accept()
+    if ok then
+      active_completion_id = nil
+      rpc.request_async("accept", { completionId = item.completionId }, function() end, 1000)
+    end
+  end, { silent = true, desc = "Accept autocomplete.nvim ghost text" })
+
   if keymaps.accept then
     vim.keymap.set("i", keymaps.accept, function()
-      if M.accept() then
+      if ghost.can_accept() then
+        vim.api.nvim_feedkeys(
+          vim.api.nvim_replace_termcodes("<Plug>(autocomplete_nvim_accept)", true, false, true),
+          "i",
+          false
+        )
         return ""
       end
       local has_cmp = pcall(require, "cmp")
@@ -215,7 +230,7 @@ function M.setup(opts)
       if keymaps.accept == "<Tab>" then
         return "\t"
       end
-      return vim.api.nvim_replace_termcodes(keymaps.accept, true, false, true)
+      return keymaps.accept
     end, { expr = true, silent = true, desc = "Accept autocomplete.nvim ghost text" })
   end
   if keymaps.dismiss then

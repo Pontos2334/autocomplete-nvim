@@ -51,19 +51,30 @@ function M.show(bufnr, item)
   }
 end
 
+--- Check whether ghost text is available for acceptance without modifying buffer state.
+---@return boolean
+function M.can_accept()
+  if not M.current then
+    return false
+  end
+  if not vim.api.nvim_buf_is_valid(M.current.bufnr) then
+    return false
+  end
+  return true
+end
+
 function M.accept()
   local current = M.current
   if not current or not vim.api.nvim_buf_is_valid(current.bufnr) then
     return false
   end
   local item = current.item
-  M.clear()
   local start_pos = item.range.start
   local end_pos = item.range["end"] or item.range.end_
   local start_byte = util.position_to_byte(current.bufnr, start_pos)
   local end_byte = util.position_to_byte(current.bufnr, end_pos)
   local replacement = vim.split(item.completion, "\n", { plain = true })
-  vim.api.nvim_buf_set_text(
+  local ok, err = pcall(vim.api.nvim_buf_set_text,
     current.bufnr,
     start_pos.line,
     start_byte,
@@ -71,6 +82,10 @@ function M.accept()
     end_byte,
     replacement
   )
+  if not ok then
+    return false, err
+  end
+  M.clear()
   return true, item
 end
 

@@ -93,5 +93,37 @@ T.describe("process_channel_lines", function()
   end)
 end)
 
+T.describe("vim.NIL normalization", function()
+  T.it("vim.json.decode null becomes vim.NIL", function()
+    local decoded = vim.json.decode('{"jsonrpc":"2.0","id":1,"result":null}')
+    T.assert_true(decoded.result == vim.NIL, "JSON null should decode to vim.NIL")
+  end)
+
+  T.it("vim.NIL is not Lua nil", function()
+    local decoded = vim.json.decode('{"result":null}')
+    T.assert_true(decoded.result ~= nil, "vim.NIL should be truthy, not Lua nil")
+  end)
+
+  T.it("normalized result is nil when vim.NIL", function()
+    local raw = vim.json.decode('{"jsonrpc":"2.0","id":1,"result":null}')
+    local result = raw.result
+    if result == vim.NIL then
+      result = nil
+    end
+    T.assert_true(result == nil, "normalized vim.NIL should be nil")
+    T.assert_false(result ~= nil, "normalized vim.NIL should not be truthy")
+  end)
+
+  T.it("normal table result passes through unchanged", function()
+    local raw = vim.json.decode('{"jsonrpc":"2.0","id":1,"result":{"completionId":"abc"}}')
+    local result = raw.result
+    if result == vim.NIL then
+      result = nil
+    end
+    T.assert_true(type(result) == "table", "table result should remain table")
+    T.assert_eq(result.completionId, "abc")
+  end)
+end)
+
 T.summary()
 T.exit()

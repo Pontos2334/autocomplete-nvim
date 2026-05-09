@@ -40,7 +40,11 @@ local function handle_line(line)
   if message.error then
     pending.reject(message.error)
   else
-    pending.resolve(message.result)
+    local result = message.result
+    if result == vim.NIL then
+      result = nil
+    end
+    pending.resolve(result)
   end
 end
 

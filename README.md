@@ -7,12 +7,14 @@ This project is intentionally separate from `autocomplete-vscode`, but reuses it
 ## Features
 
 - Inline ghost text via Neovim extmarks.
-- `Tab` accept with fallback to normal Tab behavior.
+- `Tab` accept with fallback to normal Tab behavior and nvim-cmp integration.
+- `Ctrl-e` dismiss ghost text without moving cursor.
 - Automatic debounce trigger in insert mode.
 - Manual trigger command and keymap.
 - DeepSeek FIM support using `~/.autocomplete-vscode/config.json`.
 - LSP definition snippets plus recent edit/visit snippets.
 - Audit dashboard with SQLite when available and memory fallback otherwise.
+- Graceful stop/restart without restarting Neovim.
 
 ## Requirements
 
@@ -79,6 +81,7 @@ With lazy.nvim:
       enabled = true,
       keymaps = {
         accept = "<Tab>",
+        dismiss = "<C-e>",
         trigger = "<C-M-Space>",
         open_audit = "<leader>aa",
       },
@@ -87,17 +90,55 @@ With lazy.nvim:
 }
 ```
 
-Manual commands:
+### Configuration
 
-- `:AutocompleteNvimTrigger`
-- `:AutocompleteNvimReload`
-- `:AutocompleteNvimAudit`
+| Option | Default | Description |
+|--------|---------|-------------|
+| `enabled` | `true` | Enable/disable the plugin |
+| `debounce_delay` | `350` | Delay in ms before triggering completion |
+| `node_command` | `"node"` | Path to Node.js binary |
+| `config_path` | `~/.autocomplete-vscode/config.json` | Path to config file |
+| `keymaps.accept` | `"<Tab>"` | Accept ghost text keymap |
+| `keymaps.dismiss` | `"<C-e>"` | Dismiss ghost text keymap |
+| `keymaps.trigger` | `"<C-M-Space>"` | Manual trigger keymap |
+| `keymaps.open_audit` | `nil` | Open audit dashboard keymap |
+| `ghost_text.hl_group` | `"Comment"` | Highlight group for ghost text |
+| `filetypes` | `nil` | Whitelist of filetypes (nil = all) |
+| `notify` | `true` | Show notification messages |
 
-When audit is enabled, `:AutocompleteNvimAudit` opens the dashboard URL returned by the daemon. The dashboard shows request timing, prefix/suffix, prompt context, raw completion, displayed completion, filter reasons, and errors.
+### Commands
+
+- `:AutocompleteNvimTrigger` - Manually trigger a completion
+- `:AutocompleteNvimReload` - Reload configuration from disk
+- `:AutocompleteNvimAudit` - Open the audit dashboard in browser
+- `:AutocompleteNvimStop` - Stop the plugin (call `setup()` again to restart)
+
+### Stop / Restart
+
+```lua
+-- Stop the plugin
+require("autocomplete_nvim").stop()
+
+-- Restart it
+require("autocomplete_nvim").setup({})
+```
+
+Or use `:AutocompleteNvimStop` to stop, then call `setup()` to restart.
+
+## Audit Dashboard
+
+When `audit.enabled` is true in your config, `:AutocompleteNvimAudit` opens a web dashboard at `http://127.0.0.1:3210/audit`. The dashboard shows:
+
+- Request timing and latency stats
+- Prefix/suffix and prompt context sent to the model
+- Raw completion and displayed completion after post-processing
+- Filter reasons when completions are dropped
+- Real-time updates via SSE
+
+If `node:sqlite` is unavailable, audit records are kept in memory and the dashboard still works.
 
 ## Notes
 
 - MVP supports DeepSeek FIM only. Use `https://api.deepseek.com/beta` as `apiBase`.
 - The plugin does not auto-start from `plugin/autocomplete_nvim.lua`; call `setup()` explicitly.
-- Audit dashboard is available only when `audit.enabled` is true.
-- If `node:sqlite` is unavailable or fails, audit records are kept in memory and the dashboard still works.
+- When using `blink.cmp` or `nvim-cmp`, the Tab key delegates to them when no ghost text is visible.
