@@ -86,7 +86,7 @@ export class CompletionEngine {
     }
     if (!this.config.model.apiKey) {
       throw new Error(
-        "No API key configured. Set model.apiKey in ~/.autocomplete-vscode/config.json or DEEPSEEK_API_KEY.",
+        "No API key configured. Set model.apiKey in ~/.autocomplete-nvim/config.json or DEEPSEEK_API_KEY.",
       );
     }
     if (!supportsDeepSeekFim(this.config.model.apiBase)) {
@@ -166,7 +166,7 @@ export class CompletionEngine {
     const timeout = setTimeout(() => {
       state.timedOut = true;
       controller.abort();
-    }, Math.max(1, this.config.options.modelTimeout) * 1000);
+    }, Math.max(1, this.config.options.modelTimeout));
 
     try {
       const response = await fetch(endpoint, {
@@ -344,6 +344,48 @@ function processSingleLineCompletion(
   return { completionText: lastLineOfCompletionText };
 }
 
+function needsLeadingNewline(prefix: string, suffix: string, completion: string): boolean {
+  if (completion.startsWith("\n")) return false;
+  if (prefix.endsWith("\n")) return false;
+
+  const lastLine = prefix.split("\n").pop() ?? "";
+  if (lastLine.trim().length === 0) return false;
+
+  // suffix must start with \n or be empty/whitespace — confirms cursor is at line end
+  if (suffix.length > 0 && !/^\s*\n/.test(suffix) && suffix.trim().length > 0) return false;
+
+  // last line must end with a statement terminator
+  if (!/[;{}\])>]$/.test(lastLine.trimEnd())) return false;
+
+  // completion must start with a statement keyword
+  const trimmed = completion.trimStart();
+  if (!/^(?:if|else|for|while|do|switch|try|catch|finally|class|function|const|let|var|return|throw|export|import|default|break|continue|case|async|await|new|typeof|instanceof|void|delete)\b/.test(trimmed)) return false;
+
+  // avoid breaking same-line continuation patterns like `foo();return x`
+  if (/;\s*(const|let|var|return)\b/.test(lastLine)) return false;
+
+  return true;
+}
+
+function inferIndentation(prefix: string, completion: string): string {
+  // if completion's first non-empty line already has leading whitespace, don't add more
+  const firstNonEmpty = completion.split("\n").find((l) => l.trim().length > 0);
+  if (firstNonEmpty && /^[ \t]/.test(firstNonEmpty)) return "";
+
+  const lines = prefix.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim().length > 0) {
+      const indent = lines[i].match(/^(\s*)/)?.[1] ?? "";
+      if (lines[i].trimEnd().endsWith("{")) {
+        const unit = indent.includes("\t") ? "\t" : "    ";
+        return indent + unit;
+      }
+      return indent;
+    }
+  }
+  return "";
+}
+
 export function postprocessCompletion(completion: string, prefix: string, suffix: string): string | undefined {
   let result = completion;
   if (!result || result.trim().length === 0) return undefined;
@@ -359,6 +401,12 @@ export function postprocessCompletion(completion: string, prefix: string, suffix
     result = result.slice(Math.min(20, suffix.length));
   }
   result = result.replace(/^```[^\n]*\n/, "").replace(/\n```$/, "");
+
+  if (needsLeadingNewline(prefix, suffix, result)) {
+    const indent = inferIndentation(prefix, result);
+    result = "\n" + indent + result;
+  }
+
   return result.trim().length === 0 ? undefined : result;
 }
 

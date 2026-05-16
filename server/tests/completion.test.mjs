@@ -189,3 +189,46 @@ test("completionDuplicatesFollowingLines returns false for short lines", () => {
 test("completionDuplicatesFollowingLines returns false for empty completion", () => {
   assert.equal(completionDuplicatesFollowingLines("", "some doc", 0), false);
 });
+
+// --- postprocessCompletion: newline insertion ---
+
+test("postprocessCompletion inserts newline after semicolon + keyword", () => {
+  const result = postprocessCompletion("if (x) {", "const a = 1;", "\n}");
+  assert.equal(result, "\nif (x) {");
+});
+
+test("postprocessCompletion inserts newline + indent after opening brace", () => {
+  const result = postprocessCompletion("return x;", "    if (x) {", "\n    }");
+  assert.equal(result, "\n        return x;");
+});
+
+test("postprocessCompletion does not duplicate newline when completion starts with \\n", () => {
+  const result = postprocessCompletion("\nif (x) {", "const a = 1;", "");
+  assert.equal(result, "\nif (x) {");
+});
+
+test("postprocessCompletion does not add indent when completion already has leading whitespace", () => {
+  const result = postprocessCompletion("  return x;", "    if (x) {", "\n    }");
+  assert.equal(result, "\n  return x;");
+});
+
+test("postprocessCompletion does not insert newline when prefix has same-line ;return continuation", () => {
+  // prefix already has `; return` on the same line → guard prevents newline
+  const result = postprocessCompletion("return b;", "const a = 1; return a;", "");
+  assert.equal(result, "return b;");
+});
+
+test("postprocessCompletion does not insert newline when cursor is mid-line (suffix has code)", () => {
+  const result = postprocessCompletion("x", "const a = ", "= 1;");
+  assert.equal(result, "x");
+});
+
+test("postprocessCompletion does not insert newline on empty line", () => {
+  const result = postprocessCompletion("if (x) {", "function f() {\n    ", "");
+  assert.equal(result, "if (x) {");
+});
+
+test("postprocessCompletion does not insert newline for plain expression", () => {
+  const result = postprocessCompletion("x + 1", "const a = ", "");
+  assert.equal(result, "x + 1");
+});
