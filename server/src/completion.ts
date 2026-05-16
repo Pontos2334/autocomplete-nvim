@@ -367,6 +367,23 @@ function needsLeadingNewline(prefix: string, suffix: string, completion: string)
   return true;
 }
 
+function inferIndentStep(lines: string[]): string | null {
+  const indents: number[] = [];
+  for (const line of lines) {
+    if (line.trim().length === 0) continue;
+    if (/^\t/.test(line)) return "\t";
+    const spaces = line.match(/^( +)/)?.[1]?.length ?? 0;
+    indents.push(spaces);
+  }
+  if (indents.length < 2) return null;
+  const sorted = [...indents].sort((a, b) => a - b);
+  for (let i = 1; i < sorted.length; i++) {
+    const diff = sorted[i] - sorted[i - 1];
+    if (diff > 0) return " ".repeat(diff);
+  }
+  return null;
+}
+
 function inferIndentation(prefix: string, completion: string): string {
   // if completion's first non-empty line already has leading whitespace, don't add more
   const firstNonEmpty = completion.split("\n").find((l) => l.trim().length > 0);
@@ -377,8 +394,8 @@ function inferIndentation(prefix: string, completion: string): string {
     if (lines[i].trim().length > 0) {
       const indent = lines[i].match(/^(\s*)/)?.[1] ?? "";
       if (lines[i].trimEnd().endsWith("{")) {
-        const unit = indent.includes("\t") ? "\t" : "    ";
-        return indent + unit;
+        const step = inferIndentStep(lines);
+        return step ? indent + step : indent;
       }
       return indent;
     }

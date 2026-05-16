@@ -197,9 +197,19 @@ test("postprocessCompletion inserts newline after semicolon + keyword", () => {
   assert.equal(result, "\nif (x) {");
 });
 
-test("postprocessCompletion inserts newline + indent after opening brace", () => {
-  const result = postprocessCompletion("return x;", "    if (x) {", "\n    }");
+test("postprocessCompletion inserts newline + indent after opening brace (4-space)", () => {
+  const result = postprocessCompletion("return x;", "function f() {\n    if (x) {", "\n    }");
   assert.equal(result, "\n        return x;");
+});
+
+test("postprocessCompletion inserts newline + indent after opening brace (2-space)", () => {
+  const result = postprocessCompletion("return x;", "function f() {\n  if (x) {", "\n  }");
+  assert.equal(result, "\n    return x;");
+});
+
+test("postprocessCompletion falls back to current indent when step cannot be inferred", () => {
+  const result = postprocessCompletion("return x;", "if (x) {", "\n}");
+  assert.equal(result, "\nreturn x;");
 });
 
 test("postprocessCompletion does not duplicate newline when completion starts with \\n", () => {
