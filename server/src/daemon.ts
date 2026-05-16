@@ -1,7 +1,7 @@
 import { loadConfig } from "./config.js";
 import { JsonRpcTransport } from "./transport.js";
 import { MethodHandler } from "./methods.js";
-import { AuditManager } from "./audit.js";
+import { AuditManager } from "./audit/index.js";
 
 export async function createDaemon(configPath?: string): Promise<{
   transport: JsonRpcTransport;
@@ -9,7 +9,8 @@ export async function createDaemon(configPath?: string): Promise<{
   audit: AuditManager;
 }> {
   const config = loadConfig(configPath);
-  const audit = new AuditManager(config.audit);
+  const auditConfig = { ...config.audit, configPath: config.configPath };
+  const audit = new AuditManager(auditConfig);
   const handler = new MethodHandler(config, audit);
   const transport = new JsonRpcTransport();
   transport.onMessage((request) => handler.handle(request));

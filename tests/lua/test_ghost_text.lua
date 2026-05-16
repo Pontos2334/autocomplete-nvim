@@ -81,6 +81,86 @@ T.describe("autocomplete_nvim.ghost", function()
     local ok = ghost.accept()
     T.assert_false(ok)
   end)
+
+  T.it("accept moves cursor to end of single-line completion", function()
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "const a = " })
+    vim.api.nvim_win_set_buf(0, buf)
+    ghost.show(buf, {
+      completionId = "cursor-1",
+      completion = "1",
+      range = {
+        start = { line = 0, character = 10 },
+        ["end"] = { line = 0, character = 10 },
+      },
+    })
+    local ok = ghost.accept()
+    T.assert_true(ok)
+    T.assert_eq(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1], "const a = 1")
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    T.assert_eq(cursor[1], 1)
+    local line_len = #vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+    T.assert_true(cursor[2] >= line_len - 1, "cursor at or past inserted text")
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  T.it("accept moves cursor to end of multi-line completion", function()
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "fn() {", "  " })
+    vim.api.nvim_win_set_buf(0, buf)
+    ghost.show(buf, {
+      completionId = "cursor-2",
+      completion = "return x;\n}",
+      range = {
+        start = { line = 1, character = 2 },
+        ["end"] = { line = 1, character = 2 },
+      },
+    })
+    local ok = ghost.accept()
+    T.assert_true(ok)
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    T.assert_eq(cursor[1], 3)
+    local last_line = vim.api.nvim_buf_get_lines(buf, 2, 3, false)[1]
+    T.assert_true(cursor[2] >= #last_line - 1, "cursor at or past last replacement char")
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  T.it("accept moves cursor to col 0 when completion ends with newline", function()
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "line1" })
+    vim.api.nvim_win_set_buf(0, buf)
+    ghost.show(buf, {
+      completionId = "cursor-3",
+      completion = "hello\n",
+      range = {
+        start = { line = 0, character = 5 },
+        ["end"] = { line = 0, character = 5 },
+      },
+    })
+    local ok = ghost.accept()
+    T.assert_true(ok)
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    T.assert_eq(cursor[1], 2)
+    T.assert_eq(cursor[2], 0)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  T.it("accept succeeds without moving cursor when buffer has no window", function()
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "foo" })
+    ghost.show(buf, {
+      completionId = "cursor-4",
+      completion = "bar",
+      range = {
+        start = { line = 0, character = 3 },
+        ["end"] = { line = 0, character = 3 },
+      },
+    })
+    local ok = ghost.accept()
+    T.assert_true(ok)
+    T.assert_eq(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1], "foobar")
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end)
 end)
 
 T.describe("autocomplete_nvim.ghost <Plug> keymap", function()

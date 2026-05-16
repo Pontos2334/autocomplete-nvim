@@ -69,6 +69,10 @@ function M.accept()
     return false
   end
   local item = current.item
+  if not item or not item.range or not item.range.start then
+    M.clear()
+    return false
+  end
   local start_pos = item.range.start
   local end_pos = item.range["end"] or item.range.end_
   local start_byte = util.position_to_byte(current.bufnr, start_pos)
@@ -86,6 +90,23 @@ function M.accept()
     return false, err
   end
   M.clear()
+  local target_line = start_pos.line + #replacement - 1
+  local target_col
+  if #replacement == 1 then
+    target_col = start_byte + #replacement[1]
+  else
+    target_col = #replacement[#replacement]
+  end
+  local win
+  if vim.api.nvim_win_get_buf(0) == current.bufnr then
+    win = vim.api.nvim_get_current_win()
+  else
+    local wins = vim.fn.win_findbuf(current.bufnr)
+    win = wins and wins[1] or nil
+  end
+  if win then
+    pcall(vim.api.nvim_win_set_cursor, win, { target_line + 1, target_col })
+  end
   return true, item
 end
 

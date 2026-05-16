@@ -8,6 +8,15 @@ import type {
   Position,
   Range,
 } from "./types.js";
+import { postprocessCompletion } from "./postprocessing.js";
+import {
+  runFilterPipeline,
+  type PipelineContext,
+} from "./filtering/StreamTransformPipeline.js";
+import {
+  GeneratorReuseManager,
+  type ReuseInfo,
+} from "./generation/GeneratorReuseManager.js";
 
 interface PrefixSuffix {
   prefix: string;
@@ -19,6 +28,10 @@ interface PrefixSuffix {
 interface StreamState {
   timedOut: boolean;
   chunkCount: number;
+  firstChunkAt?: number;
+  llmCallStartAt?: number;
+  llmCallEndAt?: number;
+  partialReturned: boolean;
 }
 
 export interface CompletionAuditDetails {
@@ -32,12 +45,22 @@ export interface CompletionAuditDetails {
   isMultiline: boolean;
   chunkCount: number;
   filterReason?: string;
+  timedOut: boolean;
+  partialReturned: boolean;
+  reuseHit: boolean;
+  reuseReason?: ReuseInfo["reuseReason"];
+  timing: {
+    firstChunkAt?: number;
+    llmCallStartAt?: number;
+    llmCallEndAt?: number;
+  };
 }
 
 export class CompletionEngine {
   private config: AppConfig;
   private cache = new Map<string, string>();
   private static readonly MAX_CACHE_SIZE = 200;
+  private reuseManager = new GeneratorReuseManager();
 
   constructor(config: AppConfig) {
     this.config = config;
@@ -78,6 +101,10 @@ export class CompletionEngine {
       completionOptions,
       isMultiline,
       chunkCount: 0,
+      timedOut: false,
+      partialReturned: false,
+      reuseHit: false,
+      timing: {},
     };
 
     if (this.config.options.disable) {
@@ -96,25 +123,122 @@ export class CompletionEngine {
     }
 
     const cacheKey = `${request.filepath}\0${ps.prunedPrefix}\0${ps.prunedSuffix}`;
-    let completion = this.config.options.useCache ? this.cache.get(cacheKey) : undefined;
+    let completion = this.config.options.useCache
+      ? this.cache.get(cacheKey)
+      : undefined;
     let cacheHit = Boolean(completion);
-    const streamState: StreamState = { timedOut: false, chunkCount: 0 };
+    const streamState: StreamState = { timedOut: false, chunkCount: 0, partialReturned: false };
 
     if (!completion) {
-      completion = await this.streamDeepSeekFim(ps.prunedPrefix, ps.prunedSuffix, completionOptions, streamState, signal);
+      // Internal abort controller for soft timeout / filter pipeline fullStop.
+      // This is separate from the external signal (which comes from methods.ts cancel).
+      const internalAbort = new AbortController();
+      // Chain external signal to internal
+      signal?.addEventListener("abort", () => internalAbort.abort(), { once: true });
+
+      // Use reuse manager to potentially reuse an in-flight generator
+      const rawStream = this.reuseManager.getGenerator(
+        ps.prunedPrefix,
+        ps.prunedSuffix,
+        request.filepath,
+        () => this.streamDeepSeekFim(
+          ps.prunedPrefix,
+          ps.prunedSuffix,
+          completionOptions,
+          streamState,
+          internalAbort.signal,
+        ),
+      );
+      const reuseInfo = this.reuseManager.getLastReuseInfo();
+      audit.reuseHit = reuseInfo.reuseHit;
+      audit.reuseReason = reuseInfo.reuseReason;
+      const abortIfCurrentLease = () => {
+        if (this.reuseManager.isLeaseActive(reuseInfo.leaseId)) {
+          internalAbort.abort();
+        }
+      };
+
+      // Run streaming filter pipeline
+      const aborted = { value: false };
+      const pipelineCtx: PipelineContext = {
+        prefix: ps.prunedPrefix,
+        suffix: ps.prunedSuffix,
+        stopTokens: this.config.options.stop ?? [],
+        lineBelowCursor: getLineBelowCursor(ps.suffix),
+        fullStop: () => {
+          aborted.value = true;
+          abortIfCurrentLease();
+        },
+      };
+      const filteredStream = runFilterPipeline(rawStream, pipelineCtx);
+
+      // Soft timeout: return whatever we have if non-empty content received
+      const softTimeoutMs = this.config.options.showWhateverWeHaveAtMs ?? 0;
+      const streamStart = Date.now();
+
+      completion = "";
+      try {
+        for await (const chunk of filteredStream) {
+          if (chunk) {
+            if (!streamState.firstChunkAt) {
+              streamState.firstChunkAt = Date.now();
+            }
+            streamState.chunkCount++;
+            completion += chunk;
+          }
+
+          // Soft timeout check: if we have content and enough time has passed
+          if (
+            softTimeoutMs > 0 &&
+            completion.trim().length > 0 &&
+            Date.now() - streamStart >= softTimeoutMs
+          ) {
+            streamState.partialReturned = true;
+            // Abort the upstream request only if this request still owns it.
+            abortIfCurrentLease();
+            break;
+          }
+        }
+      } catch (error: any) {
+        if (streamState.timedOut || signal?.aborted || error?.name === "AbortError") {
+          // Use whatever we have so far
+        } else {
+          throw error;
+        }
+      }
+
+      if (streamState.partialReturned || aborted.value || signal?.aborted) {
+        await this.reuseManager.cancelLease(reuseInfo.leaseId);
+      }
+      streamState.llmCallEndAt = Date.now();
+
       audit.chunkCount = streamState.chunkCount;
       audit.completion = completion;
+      audit.timedOut = streamState.timedOut || Boolean(signal?.aborted);
+      audit.partialReturned = streamState.partialReturned;
+      audit.timing = {
+        firstChunkAt: streamState.firstChunkAt,
+        llmCallStartAt: streamState.llmCallStartAt,
+        llmCallEndAt: streamState.llmCallEndAt,
+      };
+
       if (!completion) {
-        audit.filterReason = "empty_llm_response";
+        audit.filterReason = aborted.value ? "stream_filtered" : "empty_llm_response";
         return { audit };
       }
-      const processed = postprocessCompletion(completion, ps.prunedPrefix, ps.prunedSuffix);
+
+      const processed = postprocessCompletion(
+        completion,
+        ps.prunedPrefix,
+        ps.prunedSuffix,
+      );
       audit.processedCompletion = processed ?? "";
       if (!processed) {
         audit.filterReason = "postprocess_dropped";
         return { audit };
       }
       completion = processed;
+
       if (this.config.options.useCache && !streamState.timedOut) {
         if (this.cache.size >= CompletionEngine.MAX_CACHE_SIZE) {
           const firstKey = this.cache.keys().next().value;
@@ -125,9 +249,16 @@ export class CompletionEngine {
     } else {
       audit.completion = completion;
       audit.processedCompletion = completion;
+      audit.reuseHit = false;
+      audit.reuseReason = "no_active";
     }
 
-    const render = renderCompletion(completion, request, ps, isMultiline);
+    const render = renderCompletion(
+      completion,
+      request,
+      ps,
+      isMultiline,
+    );
     if (!render) {
       audit.filterReason = "render_dropped";
       return { audit };
@@ -148,18 +279,29 @@ export class CompletionEngine {
     return { result, audit };
   }
 
+  async cancelReuse(): Promise<void> {
+    await this.reuseManager.cancelActive();
+  }
+
   accept(completionId: string): void {
     void completionId;
   }
 
-  private async streamDeepSeekFim(
+  /**
+   * Stream DeepSeek FIM response as an AsyncGenerator of text chunks.
+   * The caller consumes this through the filter pipeline.
+   */
+  private async *streamDeepSeekFim(
     prefix: string,
     suffix: string,
     options: Record<string, unknown>,
     state: StreamState,
     signal?: AbortSignal,
-  ): Promise<string> {
-    const endpoint = new URL("completions", ensureTrailingSlash(this.config.model.apiBase));
+  ): AsyncGenerator<string> {
+    const endpoint = new URL(
+      "completions",
+      ensureTrailingSlash(this.config.model.apiBase),
+    );
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -169,6 +311,7 @@ export class CompletionEngine {
     }, Math.max(1, this.config.options.modelTimeout));
 
     try {
+      state.llmCallStartAt = Date.now();
       const response = await fetch(endpoint, {
         method: "POST",
         body: JSON.stringify({
@@ -193,21 +336,20 @@ export class CompletionEngine {
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`FIM request failed: ${response.status} - ${text.slice(0, 300)}`);
+        throw new Error(
+          `FIM request failed: ${response.status} - ${text.slice(0, 300)}`,
+        );
       }
 
-      let completion = "";
       for await (const event of streamSse(response)) {
         const text = event?.choices?.[0]?.text ?? "";
         if (text) {
-          state.chunkCount++;
-          completion += text;
+          yield text;
         }
       }
-      return completion;
     } catch (error: any) {
       if (state.timedOut || signal?.aborted || error?.name === "AbortError") {
-        return "";
+        return;
       }
       throw error;
     } finally {
@@ -215,6 +357,20 @@ export class CompletionEngine {
       signal?.removeEventListener("abort", onAbort);
     }
   }
+}
+
+/**
+ * Extract the first non-empty line below cursor from suffix.
+ */
+function getLineBelowCursor(suffix: string): string {
+  const lines = suffix.split("\n");
+  // Skip the first segment (rest of current line)
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() !== "") {
+      return lines[i];
+    }
+  }
+  return "";
 }
 
 export function constructPrefixSuffix(
@@ -234,14 +390,7 @@ export function constructPrefixSuffix(
     },
   });
 
-  const snippets = [
-    ...(request.lspSnippets ?? []),
-    ...(request.recentlyVisitedRanges ?? []),
-    ...(request.recentlyEditedRanges ?? []).map((range) => ({
-      filepath: range.filepath,
-      content: range.lines.join("\n"),
-    })),
-  ].filter((snippet) => snippet.filepath !== request.filepath);
+  const snippets = mergeContextSnippets(request, 12000);
 
   const prefixWithSnippets = snippets.length
     ? `${formatSnippets(snippets, request.workspaceDirs ?? [], request.filepath)}\n${prefix}`
@@ -250,12 +399,76 @@ export function constructPrefixSuffix(
   return {
     prefix,
     suffix,
-    prunedPrefix: pruneStart(prefixWithSnippets, Math.floor(config.options.maxPromptTokens * config.options.prefixPercentage) * 4),
-    prunedSuffix: pruneEnd(suffix, Math.floor(config.options.maxPromptTokens * config.options.maxSuffixPercentage) * 4),
+    prunedPrefix: pruneStart(
+      prefixWithSnippets,
+      Math.floor(
+        config.options.maxPromptTokens * config.options.prefixPercentage,
+      ) * 4,
+    ),
+    prunedSuffix: pruneEnd(
+      suffix,
+      Math.floor(
+        config.options.maxPromptTokens * config.options.maxSuffixPercentage,
+      ) * 4,
+    ),
   };
 }
 
-export async function* streamSse(response: Response): AsyncGenerator<any> {
+export function mergeContextSnippets(
+  request: CompletionRequest,
+  maxTotalChars: number,
+): CodeSnippet[] {
+  const current = normalizeFilepath(request.filepath);
+  const seen = new Set<string>();
+  let total = 0;
+  const merged: CodeSnippet[] = [];
+
+  const add = (snippet: CodeSnippet | undefined, kind: NonNullable<CodeSnippet["kind"]>) => {
+    if (!snippet?.filepath || !snippet.content?.trim()) return;
+    if (normalizeFilepath(snippet.filepath) === current) return;
+    const key = `${normalizeFilepath(snippet.filepath)}\0${snippet.content}`;
+    if (seen.has(key)) return;
+    if (total >= maxTotalChars) return;
+
+    const remaining = maxTotalChars - total;
+    const content =
+      snippet.content.length > remaining
+        ? snippet.content.slice(0, remaining)
+        : snippet.content;
+    if (!content.trim()) return;
+
+    seen.add(key);
+    total += content.length;
+    merged.push({ ...snippet, content, kind: snippet.kind ?? kind });
+  };
+
+  for (const snippet of request.lspSnippets ?? []) add(snippet, "lsp");
+  for (const snippet of request.importSnippets ?? []) add(snippet, "import");
+  for (const range of request.recentlyEditedRanges ?? []) {
+    add(
+      {
+        filepath: range.filepath,
+        content: range.lines.join("\n"),
+      },
+      "recent_edit",
+    );
+  }
+  for (const snippet of request.recentlyVisitedRanges ?? []) {
+    add(snippet, "recent_visit");
+  }
+  for (const snippet of request.openedFileSnippets ?? []) {
+    add(snippet, "open_buffer");
+  }
+  for (const snippet of request.workspaceConfigSnippets ?? []) {
+    add(snippet, "workspace_config");
+  }
+
+  return merged;
+}
+
+export async function* streamSse(
+  response: Response,
+): AsyncGenerator<any> {
   const reader = response.body?.getReader();
   if (!reader) return;
   const decoder = new TextDecoder();
@@ -268,7 +481,11 @@ export async function* streamSse(response: Response): AsyncGenerator<any> {
     buffer = lines.pop() ?? "";
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith(":") || !trimmed.startsWith("data:")) {
+      if (
+        !trimmed ||
+        trimmed.startsWith(":") ||
+        !trimmed.startsWith("data:")
+      ) {
         continue;
       }
       const data = trimmed.slice(5).trim();
@@ -299,7 +516,11 @@ function renderCompletion(
   const line = request.text.split("\n")[start.line] ?? "";
   const currentText = line.substring(start.character);
   if (!text.includes("\n")) {
-    const processed = processSingleLineCompletion(text, currentText, start.character);
+    const processed = processSingleLineCompletion(
+      text,
+      currentText,
+      start.character,
+    );
     if (!processed) return undefined;
     text = processed.completionText;
     if (processed.range) {
@@ -331,120 +552,63 @@ function processSingleLineCompletion(
     value: string;
   }>;
 
-  const parts = diffs.map((diff) => (!diff.added && !diff.removed ? "=" : diff.added ? "+" : "-")).join("");
+  const parts = diffs
+    .map((diff) =>
+      !diff.added && !diff.removed ? "=" : diff.added ? "+" : "-",
+    )
+    .join("");
   if (parts === "+") return { completionText: lastLineOfCompletionText };
   if (parts === "+=" || parts === "+=+") {
     return {
       completionText: lastLineOfCompletionText,
-      range: { start: cursorPosition, end: currentText.length + cursorPosition },
+      range: {
+        start: cursorPosition,
+        end: currentText.length + cursorPosition,
+      },
     };
   }
-  if (parts === "+-" || parts === "-+") return { completionText: lastLineOfCompletionText };
+  if (parts === "+-" || parts === "-+")
+    return { completionText: lastLineOfCompletionText };
   if (diffs[0]?.added) return { completionText: diffs[0].value };
   return { completionText: lastLineOfCompletionText };
 }
 
-function needsLeadingNewline(prefix: string, suffix: string, completion: string): boolean {
-  if (completion.startsWith("\n")) return false;
-  if (prefix.endsWith("\n")) return false;
-
-  const lastLine = prefix.split("\n").pop() ?? "";
-  if (lastLine.trim().length === 0) return false;
-
-  // suffix must start with \n or be empty/whitespace — confirms cursor is at line end
-  if (suffix.length > 0 && !/^\s*\n/.test(suffix) && suffix.trim().length > 0) return false;
-
-  // last line must end with a statement terminator
-  if (!/[;{}\])>]$/.test(lastLine.trimEnd())) return false;
-
-  // completion must start with a statement keyword
-  const trimmed = completion.trimStart();
-  if (!/^(?:if|else|for|while|do|switch|try|catch|finally|class|function|const|let|var|return|throw|export|import|default|break|continue|case|async|await|new|typeof|instanceof|void|delete)\b/.test(trimmed)) return false;
-
-  // avoid breaking same-line continuation patterns like `foo();return x`
-  if (/;\s*(const|let|var|return)\b/.test(lastLine)) return false;
-
-  return true;
-}
-
-function inferIndentStep(lines: string[]): string | null {
-  const indents: number[] = [];
-  for (const line of lines) {
-    if (line.trim().length === 0) continue;
-    if (/^\t/.test(line)) return "\t";
-    const spaces = line.match(/^( +)/)?.[1]?.length ?? 0;
-    indents.push(spaces);
-  }
-  if (indents.length < 2) return null;
-  const sorted = [...indents].sort((a, b) => a - b);
-  for (let i = 1; i < sorted.length; i++) {
-    const diff = sorted[i] - sorted[i - 1];
-    if (diff > 0) return " ".repeat(diff);
-  }
-  return null;
-}
-
-function inferIndentation(prefix: string, completion: string): string {
-  // if completion's first non-empty line already has leading whitespace, don't add more
-  const firstNonEmpty = completion.split("\n").find((l) => l.trim().length > 0);
-  if (firstNonEmpty && /^[ \t]/.test(firstNonEmpty)) return "";
-
-  const lines = prefix.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].trim().length > 0) {
-      const indent = lines[i].match(/^(\s*)/)?.[1] ?? "";
-      if (lines[i].trimEnd().endsWith("{")) {
-        const step = inferIndentStep(lines);
-        return step ? indent + step : indent;
-      }
-      return indent;
-    }
-  }
-  return "";
-}
-
-export function postprocessCompletion(completion: string, prefix: string, suffix: string): string | undefined {
-  let result = completion;
-  if (!result || result.trim().length === 0) return undefined;
-  const lineAbove = prefix.split("\n").filter((line) => line.trim()).slice(-1)[0];
-  const firstCompletionLine = result.split("\n").find((line) => line.trim());
-  if (lineAbove && firstCompletionLine && lineAbove.trim() === firstCompletionLine.trim()) {
-    return undefined;
-  }
-  if (prefix.endsWith(" ") && result.startsWith(" ")) {
-    result = result.slice(1);
-  }
-  if (suffix && result.startsWith(suffix.slice(0, Math.min(20, suffix.length)))) {
-    result = result.slice(Math.min(20, suffix.length));
-  }
-  result = result.replace(/^```[^\n]*\n/, "").replace(/\n```$/, "");
-
-  if (needsLeadingNewline(prefix, suffix, result)) {
-    const indent = inferIndentation(prefix, result);
-    result = "\n" + indent + result;
-  }
-
-  return result.trim().length === 0 ? undefined : result;
-}
-
-export function shouldCompleteMultiline(mode: string, prefix: string, suffix: string): boolean {
+export function shouldCompleteMultiline(
+  mode: string,
+  prefix: string,
+  suffix: string,
+): boolean {
   if (mode === "always") return true;
   if (mode === "never") return false;
   const currentLine = prefix.split("\n").pop() ?? "";
-  if (currentLine.trimStart().startsWith("//") || currentLine.trimStart().startsWith("#")) {
+  if (
+    currentLine.trimStart().startsWith("//") ||
+    currentLine.trimStart().startsWith("#")
+  ) {
     return false;
   }
   return suffix.startsWith("\n") || suffix.trim().length === 0;
 }
 
-export function trimDuplicateFollowingLines(completion: string, documentText: string, startLine: number): string {
+export function trimDuplicateFollowingLines(
+  completion: string,
+  documentText: string,
+  startLine: number,
+): string {
   const completionLines = completion.split(/\r?\n/);
   const docLines = documentText.split(/\r?\n/);
   let keep = completionLines.length;
-  for (let i = 1; i <= Math.min(completionLines.length, docLines.length - startLine - 1); i++) {
+  for (
+    let i = 1;
+    i <= Math.min(completionLines.length, docLines.length - startLine - 1);
+    i++
+  ) {
     const docLine = (docLines[startLine + i] ?? "").trim();
-    const completionLine = (completionLines[completionLines.length - i] ?? "").trim();
-    if (docLine && docLine === completionLine) keep = completionLines.length - i;
+    const completionLine = (
+      completionLines[completionLines.length - i] ?? ""
+    ).trim();
+    if (docLine && docLine === completionLine)
+      keep = completionLines.length - i;
     else break;
   }
   return completionLines.slice(0, keep).join("\n");
@@ -455,38 +619,91 @@ export function completionDuplicatesFollowingLines(
   documentText: string,
   startLine: number,
 ): boolean {
-  const completionLines = completion.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  if (completionLines.length === 0 || completionLines.every((line) => line.length <= 4)) return false;
-  const following = documentText.split(/\r?\n/).slice(startLine + 1).map((line) => line.trim()).filter(Boolean).slice(0, completionLines.length);
-  return following.length >= completionLines.length && completionLines.every((line, i) => line === following[i]);
+  const completionLines = completion
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (
+    completionLines.length === 0 ||
+    completionLines.every((line) => line.length <= 4)
+  )
+    return false;
+  const following = documentText
+    .split(/\r?\n/)
+    .slice(startLine + 1)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, completionLines.length);
+  return (
+    following.length >= completionLines.length &&
+    completionLines.every((line, i) => line === following[i])
+  );
 }
 
 function getRangeInString(content: string, range: Range): string {
   const lines = content.split("\n");
   if (range.start.line === range.end.line) {
-    return lines[range.start.line]?.substring(range.start.character, range.end.character) ?? "";
+    return (
+      lines[range.start.line]?.substring(
+        range.start.character,
+        range.end.character,
+      ) ?? ""
+    );
   }
-  const firstLine = lines[range.start.line]?.substring(range.start.character) ?? "";
+  const firstLine =
+    lines[range.start.line]?.substring(range.start.character) ?? "";
   const middleLines = lines.slice(range.start.line + 1, range.end.line);
-  const lastLine = lines[range.end.line]?.substring(0, range.end.character) ?? "";
+  const lastLine =
+    lines[range.end.line]?.substring(0, range.end.character) ?? "";
   return [firstLine, ...middleLines, lastLine].join("\n");
 }
 
-function formatSnippets(snippets: CodeSnippet[], workspaceDirs: string[], currentFilepath: string): string {
-  const body = snippets.slice(0, 8).map((snippet) => {
-    const rel = relativeLabel(snippet.filepath, workspaceDirs);
-    return `--- [related file: ${rel}] ---\n${snippet.content}`;
-  }).join("\n\n");
+function formatSnippets(
+  snippets: CodeSnippet[],
+  workspaceDirs: string[],
+  currentFilepath: string,
+): string {
+  const body = snippets
+    .slice(0, 8)
+    .map((snippet) => {
+      const rel = relativeLabel(snippet.filepath, workspaceDirs);
+      return `--- [${snippetLabel(snippet.kind)}: ${rel}] ---\n${snippet.content}`;
+    })
+    .join("\n\n");
   return `${body}\n--- current file: ${relativeLabel(currentFilepath, workspaceDirs)} ---`;
 }
 
+function snippetLabel(kind: CodeSnippet["kind"]): string {
+  switch (kind) {
+    case "workspace_config":
+      return "项目配置文件";
+    case "import":
+      return "Import 定义";
+    case "recent_edit":
+      return "最近编辑";
+    case "recent_visit":
+      return "最近访问";
+    case "open_buffer":
+      return "最近打开文件";
+    case "lsp":
+      return "IDE/LSP 定义";
+    default:
+      return "相关文件";
+  }
+}
+
 function relativeLabel(file: string, workspaceDirs: string[]): string {
-  const normalized = file.replace(/^file:\/\//, "").replace(/\\/g, "/");
+  const normalized = normalizeFilepath(file);
   for (const dir of workspaceDirs) {
-    const d = dir.replace(/^file:\/\//, "").replace(/\\/g, "/");
-    if (normalized.startsWith(d)) return normalized.slice(d.length).replace(/^\/+/, "");
+    const d = normalizeFilepath(dir);
+    if (normalized.startsWith(d))
+      return normalized.slice(d.length).replace(/^\/+/, "");
   }
   return path.basename(normalized);
+}
+
+function normalizeFilepath(value: string): string {
+  return value.replace(/^file:\/\//, "").replace(/\\/g, "/");
 }
 
 function pruneStart(text: string, maxChars: number): string {
@@ -500,7 +717,10 @@ function pruneEnd(text: string, maxChars: number): string {
 function supportsDeepSeekFim(apiBase: string): boolean {
   try {
     const url = new URL(apiBase);
-    return url.host === "api.deepseek.com" && url.pathname.replace(/\/+$/, "") === "/beta";
+    return (
+      url.host === "api.deepseek.com" &&
+      url.pathname.replace(/\/+$/, "") === "/beta"
+    );
   } catch {
     return false;
   }

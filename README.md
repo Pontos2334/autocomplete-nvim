@@ -11,16 +11,17 @@ This project is intentionally separate from `autocomplete-vscode`, but reuses it
 - `Ctrl-e` dismiss ghost text without moving cursor.
 - Automatic debounce trigger in insert mode.
 - Manual trigger command and keymap.
-- DeepSeek FIM support using `~/.autocomplete-vscode/config.json`.
-- LSP definition snippets plus recent edit/visit snippets.
+- DeepSeek FIM support using `~/.autocomplete-nvim/config.json`.
+- LSP/import definition snippets plus recent edit/visit, open-buffer, and workspace config snippets.
 - Audit dashboard with SQLite when available and memory fallback otherwise.
+- Request reuse, chain completion, enter/backspace trigger delays, and optional statusline state.
 - Graceful stop/restart without restarting Neovim.
 
 ## Requirements
 
 - Neovim 0.11+
 - Node.js 20+; Node 24 is verified in this workspace
-- A DeepSeek FIM config at `~/.autocomplete-vscode/config.json`
+- A DeepSeek FIM config at `~/.autocomplete-nvim/config.json`
 
 Example config:
 
@@ -62,11 +63,10 @@ npm test
 
 Lua smoke tests can be run from the project root:
 
-```powershell
-$tests = Get-ChildItem -Path tests\lua\test_*.lua | Sort-Object Name
-foreach ($t in $tests) {
-  nvim --headless -u NONE --cmd "set rtp+=F:/programming-file/autocomplete-nvim" -l $t.FullName
-}
+```sh
+for t in tests/lua/test_*.lua; do
+  nvim --headless -u NONE --cmd "set rtp+=." -l "$t"
+done
 ```
 
 ## Setup
@@ -75,7 +75,7 @@ With lazy.nvim:
 
 ```lua
 {
-  dir = "F:/programming-file/autocomplete-nvim",
+  dir = "~/programming-file/autocomplete-nvim",
   config = function()
     require("autocomplete_nvim").setup({
       enabled = true,
@@ -95,16 +95,30 @@ With lazy.nvim:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `true` | Enable/disable the plugin |
-| `debounce_delay` | `350` | Delay in ms before triggering completion |
+| `debounce_delay` | `350` | Delay in ms before triggering completion after normal typing |
+| `enter_trigger_delay` | `120` | Delay in ms after Enter/newline (falls back to `debounce_delay` if 0) |
+| `backspace_trigger_delay` | `180` | Delay in ms after backspace/deletion (falls back to `debounce_delay` if 0) |
+| `chain_completion_delay` | `0` | Delay in ms to trigger next completion after accepting (0 = disabled) |
 | `node_command` | `"node"` | Path to Node.js binary |
-| `config_path` | `~/.autocomplete-vscode/config.json` | Path to config file |
+| `config_path` | `~/.autocomplete-nvim/config.json` | Path to config file |
 | `keymaps.accept` | `"<Tab>"` | Accept ghost text keymap |
 | `keymaps.dismiss` | `"<C-e>"` | Dismiss ghost text keymap |
 | `keymaps.trigger` | `"<C-M-Space>"` | Manual trigger keymap |
 | `keymaps.open_audit` | `nil` | Open audit dashboard keymap |
 | `ghost_text.hl_group` | `"Comment"` | Highlight group for ghost text |
 | `filetypes` | `nil` | Whitelist of filetypes (nil = all) |
+| `disable_in_files` | `{}` | List of glob patterns to disable completions (e.g. `{"*.md", "node_modules/**"}`) |
+| `context.enabled` | `true` | Include lightweight related-code context |
+| `context.include_imports` | `true` | Resolve import/require/use symbols through LSP definitions |
+| `context.include_open_buffers` | `true` | Include snippets from recently opened buffers |
+| `context.include_workspace_config` | `true` | Include small project config files like `package.json` or `go.mod` |
+| `context.timeout_ms` | `100` | Context collection timeout in ms |
+| `context.max_snippets` | `8` | Max snippets per context bucket |
+| `context.max_snippet_chars` | `4000` | Max chars for one context snippet |
+| `context.max_total_chars` | `12000` | Max chars for collected context before server-side pruning |
 | `notify` | `true` | Show notification messages |
+
+Server-side `options.showWhateverWeHaveAtMs` defaults to `0`. Set it in `~/.autocomplete-nvim/config.json` to return partial streamed content after a soft timeout.
 
 ### Commands
 
@@ -125,6 +139,20 @@ require("autocomplete_nvim").setup({})
 
 Or use `:AutocompleteNvimStop` to stop, then call `setup()` to restart.
 
+### Statusline
+
+For lualine or a custom statusline:
+
+```lua
+require("lualine").setup({
+  sections = {
+    lualine_x = {
+      require("autocomplete_nvim.status").statusline_component,
+    },
+  },
+})
+```
+
 ## Audit Dashboard
 
 When `audit.enabled` is true in your config, `:AutocompleteNvimAudit` opens a web dashboard at `http://127.0.0.1:3210/audit`. The dashboard shows:
@@ -133,12 +161,18 @@ When `audit.enabled` is true in your config, `:AutocompleteNvimAudit` opens a we
 - Prefix/suffix and prompt context sent to the model
 - Raw completion and displayed completion after post-processing
 - Filter reasons when completions are dropped
+- Soft timeout, reuse hit/reason, and first-token/LLM timing fields
 - Real-time updates via SSE
+- Built-in FIM demo for testing completions from the dashboard
 
-If `node:sqlite` is unavailable, audit records are kept in memory and the dashboard still works.
+The audit system supports two storage backends:
+
+- **SQLite** (preferred): Used automatically when `node:sqlite` is available (Node.js 22.5+). Records persist across daemon restarts.
+- **Memory**: Falls back automatically when SQLite is not available. Records are lost when the daemon exits, but the dashboard still works fully.
 
 ## Notes
 
 - MVP supports DeepSeek FIM only. Use `https://api.deepseek.com/beta` as `apiBase`.
 - The plugin does not auto-start from `plugin/autocomplete_nvim.lua`; call `setup()` explicitly.
 - When using `blink.cmp` or `nvim-cmp`, the Tab key delegates to them when no ghost text is visible.
+- `setup()` is idempotent: calling it again stops the previous instance cleanly and restarts with new options.

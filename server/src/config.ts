@@ -8,7 +8,7 @@ export const DEFAULT_OPTIONS: AutocompleteOptions = {
   maxPromptTokens: 4096,
   prefixPercentage: 0.3,
   maxSuffixPercentage: 0.2,
-  modelTimeout: 150,
+  modelTimeout: 55000,
   multilineCompletions: "auto",
   useCache: true,
   disable: false,
@@ -21,6 +21,7 @@ export const DEFAULT_OPTIONS: AutocompleteOptions = {
   temperature: 0.01,
   topP: 1,
   stop: ["<|end_of_sentence|>", "```"],
+  showWhateverWeHaveAtMs: 0,
 };
 
 const DEFAULT_MODEL = {
@@ -39,7 +40,7 @@ const DEFAULT_AUDIT = {
 };
 
 function getDefaultConfigPath(): string {
-  return path.join(os.homedir(), ".autocomplete-vscode", "config.json");
+  return path.join(os.homedir(), ".autocomplete-nvim", "config.json");
 }
 
 export function loadConfig(configPath?: string): AppConfig {
@@ -110,7 +111,7 @@ export function loadConfig(configPath?: string): AppConfig {
       options: DEFAULT_OPTIONS,
       audit: {
         ...DEFAULT_AUDIT,
-        dbPath: path.join(os.homedir(), ".autocomplete-vscode", "audit-nvim.db"),
+        dbPath: path.join(os.homedir(), ".autocomplete-nvim", "audit-nvim.db"),
       },
     };
   }

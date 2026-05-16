@@ -7,6 +7,7 @@ local state = {
   next_id = 1,
   pending = {},
   initialized = false,
+  shutting_down = false,
   stdout_buffer = "",
   stderr_buffer = "",
 }
@@ -97,6 +98,8 @@ function M.start()
       end)
     end,
     on_exit = function(_, code)
+      local was_shutting_down = state.shutting_down
+      state.shutting_down = false
       local was_running = state.job_id ~= nil
       state.job_id = nil
       state.initialized = false
@@ -106,7 +109,7 @@ function M.start()
         pending.reject({ message = "server exited with code " .. tostring(code) })
       end
       state.pending = {}
-      if was_running and code ~= 0 then
+      if was_running and not was_shutting_down and code ~= 0 then
         util.notify("Autocomplete server exited unexpectedly (code " .. code .. "). It will restart on next trigger.", vim.log.levels.WARN)
       end
     end,
@@ -158,6 +161,9 @@ function M.request(method, params, timeout_ms)
 end
 
 function M.initialize()
+  if state.initialized and state.job_id then
+    return
+  end
   coroutine.wrap(function()
     local opts = config.get()
     local result, err = M.request("initialize", { configPath = opts.config_path }, 10000)
@@ -185,10 +191,12 @@ end
 
 function M.stop()
   if state.job_id then
+    state.shutting_down = true
     pcall(send_raw, { jsonrpc = "2.0", id = state.next_id, method = "shutdown", params = {} })
     vim.fn.jobstop(state.job_id)
     state.job_id = nil
   end
+  state.initialized = false
   state.stdout_buffer = ""
   state.stderr_buffer = ""
 end

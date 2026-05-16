@@ -15,6 +15,6 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src/*.ts"],
-  "exclude": ["node_modules", "dist", "src/stubs/**"]
+  "include": ["src/*.ts", "src/audit/*.ts", "src/filtering/*.ts", "src/generation/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

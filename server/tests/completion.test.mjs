@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { ReadableStream } from "node:stream/web";
 import {
   constructPrefixSuffix,
+  mergeContextSnippets,
   streamSse,
-  postprocessCompletion,
   shouldCompleteMultiline,
   trimDuplicateFollowingLines,
   completionDuplicatesFollowingLines,
 } from "../dist/completion.js";
+import { postprocessCompletion } from "../dist/postprocessing.js";
 
 const config = {
   options: {
@@ -45,8 +46,49 @@ test("constructPrefixSuffix includes context snippets", () => {
     },
     config,
   );
-  assert.match(result.prunedPrefix, /related file: lib\.ts/);
+  assert.match(result.prunedPrefix, /IDE\/LSP 定义: lib\.ts/);
   assert.match(result.prunedPrefix, /current file: app\.ts/);
+});
+
+test("mergeContextSnippets orders, deduplicates, excludes current file, and budgets", () => {
+  const request = {
+    filepath: "file:///tmp/app.ts",
+    text: "",
+    pos: { line: 0, character: 0 },
+    lspSnippets: [
+      { filepath: "file:///tmp/defs.ts", content: "export const a = 1;" },
+    ],
+    importSnippets: [
+      { filepath: "file:///tmp/imports.ts", content: "export const b = 2;" },
+    ],
+    recentlyEditedRanges: [
+      {
+        filepath: "file:///tmp/edited.ts",
+        lines: ["const edited = true;"],
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+        timestamp: 1,
+      },
+    ],
+    recentlyVisitedRanges: [
+      { filepath: "file:///tmp/visited.ts", content: "const visited = true;" },
+      { filepath: "file:///tmp/app.ts", content: "should be excluded" },
+    ],
+    openedFileSnippets: [
+      { filepath: "file:///tmp/open.ts", content: "const open = true;" },
+      { filepath: "file:///tmp/defs.ts", content: "export const a = 1;" },
+    ],
+    workspaceConfigSnippets: [
+      { filepath: "file:///tmp/package.json", content: "{\"type\":\"module\"}" },
+    ],
+  };
+
+  const merged = mergeContextSnippets(request, 1000);
+  assert.deepEqual(
+    merged.map((snippet) => snippet.kind),
+    ["lsp", "import", "recent_edit", "recent_visit", "open_buffer", "workspace_config"],
+  );
+  assert.equal(merged.some((snippet) => snippet.content === "should be excluded"), false);
+  assert.equal(merged.filter((snippet) => snippet.filepath.endsWith("defs.ts")).length, 1);
 });
 
 // --- streamSse ---
@@ -197,6 +239,27 @@ test("postprocessCompletion inserts newline after semicolon + keyword", () => {
   assert.equal(result, "\nif (x) {");
 });
 
+test("postprocessCompletion inserts newline before expression statements", () => {
+  const result = postprocessCompletion(
+    "console.log('stdout', stdout.toString());console.log('stderr', stderr);",
+    'const { stdout, stderr } = children.execSync("ls - la")',
+    "",
+  );
+  assert.equal(
+    result,
+    "\nconsole.log('stdout', stdout.toString());\nconsole.log('stderr', stderr);",
+  );
+});
+
+test("postprocessCompletion does not split semicolons inside for headers", () => {
+  const result = postprocessCompletion(
+    "for (;foo();bar()) {\n  work();\n}",
+    "function run() {\n  ",
+    "\n}",
+  );
+  assert.equal(result, "for (;foo();bar()) {\n  work();\n}");
+});
+
 test("postprocessCompletion inserts newline + indent after opening brace (4-space)", () => {
   const result = postprocessCompletion("return x;", "function f() {\n    if (x) {", "\n    }");
   assert.equal(result, "\n        return x;");
@@ -241,4 +304,100 @@ test("postprocessCompletion does not insert newline on empty line", () => {
 test("postprocessCompletion does not insert newline for plain expression", () => {
   const result = postprocessCompletion("x + 1", "const a = ", "");
   assert.equal(result, "x + 1");
+});
+
+// --- postprocessCompletion: additional regression tests ---
+
+test("postprocessCompletion does not split semicolons inside for-loop header", () => {
+  const result = postprocessCompletion(
+    "for (let i = 0; i < n; i++) {\n  work();\n}",
+    "function run() {\n  ",
+    "\n}",
+  );
+  assert.equal(result, "for (let i = 0; i < n; i++) {\n  work();\n}");
+});
+
+test("postprocessCompletion does not split semicolons inside for(;;) header", () => {
+  const result = postprocessCompletion(
+    "for (;foo();bar++) {\n  work();\n}",
+    "function run() {\n  ",
+    "\n}",
+  );
+  assert.equal(result, "for (;foo();bar++) {\n  work();\n}");
+});
+
+test("postprocessCompletion does not split semicolons inside template string", () => {
+  const result = postprocessCompletion(
+    "`a;b;c`",
+    "const s = ",
+    "",
+  );
+  assert.equal(result, "`a;b;c`");
+});
+
+test("postprocessCompletion does not split semicolons inside single-quoted string", () => {
+  const result = postprocessCompletion(
+    "'a;b;c'",
+    "const s = ",
+    "",
+  );
+  assert.equal(result, "'a;b;c'");
+});
+
+test("postprocessCompletion does not split semicolons inside double-quoted string", () => {
+  const result = postprocessCompletion(
+    '"a;b;c"',
+    "const s = ",
+    "",
+  );
+  assert.equal(result, '"a;b;c"');
+});
+
+test("postprocessCompletion does not split semicolons inside line comment", () => {
+  const result = postprocessCompletion(
+    "// a; b; c;\nconst x = 1;",
+    "function f() {\n  ",
+    "\n}",
+  );
+  assert.ok(result);
+  assert.ok(!result.includes(";\n//"));
+});
+
+test("postprocessCompletion does not split semicolons inside block comment", () => {
+  const result = postprocessCompletion(
+    "/* a; b; c; */\nconst x = 1;",
+    "function f() {\n  ",
+    "\n}",
+  );
+  assert.ok(result);
+  // The block comment content should not be split
+  assert.ok(result.includes("/* a; b; c; */"));
+});
+
+test("postprocessCompletion splits glued expression statements", () => {
+  const result = postprocessCompletion(
+    "foo.bar();baz.qux()",
+    "const x = 1;",
+    "",
+  );
+  assert.equal(result, "\nfoo.bar();\nbaz.qux()");
+});
+
+test("postprocessCompletion handles escaped quotes in strings", () => {
+  const result = postprocessCompletion(
+    "'it\\'s; a; test'",
+    "const s = ",
+    "",
+  );
+  assert.equal(result, "'it\\'s; a; test'");
+});
+
+test("postprocessCompletion handles nested parentheses", () => {
+  const result = postprocessCompletion(
+    "foo(a, b);bar(c)",
+    "const x = 1;",
+    "",
+  );
+  // Both are expression statements starting with identifiers, so they should be split
+  assert.ok(result.includes(";\n"));
 });

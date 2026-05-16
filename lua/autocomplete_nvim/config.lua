@@ -3,6 +3,8 @@ local M = {}
 M.defaults = {
   enabled = true,
   debounce_delay = 350,
+  enter_trigger_delay = 120,
+  backspace_trigger_delay = 180,
   node_command = "node",
   server_path = nil,
   config_path = nil,
@@ -19,7 +21,19 @@ M.defaults = {
   max_lsp_snippets = 3,
   max_recent_files = 3,
   max_recent_edits = 3,
+  chain_completion_delay = 0,
   notify = true,
+  disable_in_files = {},
+  context = {
+    enabled = true,
+    include_imports = true,
+    include_open_buffers = true,
+    include_workspace_config = true,
+    timeout_ms = 100,
+    max_snippets = 8,
+    max_snippet_chars = 4000,
+    max_total_chars = 12000,
+  },
 }
 
 M.options = vim.deepcopy(M.defaults)

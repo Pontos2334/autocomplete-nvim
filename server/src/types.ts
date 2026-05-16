@@ -29,6 +29,7 @@ export interface Range {
 export interface CodeSnippet {
   filepath: string;
   content: string;
+  kind?: "lsp" | "import" | "recent_edit" | "recent_visit" | "open_buffer" | "workspace_config";
 }
 
 export interface RecentlyEditedRange {
@@ -61,6 +62,8 @@ export interface AutocompleteOptions {
   frequencyPenalty?: number;
   presencePenalty?: number;
   stop?: string[];
+  /** Soft timeout: if we have non-empty content after this many ms, return it immediately. 0 = disabled. */
+  showWhateverWeHaveAtMs?: number;
 }
 
 export interface ModelConfig {
@@ -78,6 +81,7 @@ export interface AuditConfig {
   ttlMs: number;
   maxRecords: number;
   dbPath: string;
+  configPath?: string;
 }
 
 export interface AppConfig {
@@ -96,8 +100,12 @@ export interface CompletionRequest {
   recentlyVisitedRanges?: CodeSnippet[];
   recentlyEditedRanges?: RecentlyEditedRange[];
   lspSnippets?: CodeSnippet[];
+  importSnippets?: CodeSnippet[];
+  openedFileSnippets?: CodeSnippet[];
+  workspaceConfigSnippets?: CodeSnippet[];
   manuallyTriggered?: boolean;
   isUntitledFile?: boolean;
+  isChainCompletion?: boolean;
 }
 
 export interface CompletionResult {
@@ -121,38 +129,4 @@ export interface AuditInfoResult {
   port: number;
 }
 
-export type AuditStatus = "pending" | "completed" | "filtered" | "error" | "cancelled";
-
-export interface AuditRecord {
-  id: string;
-  status: AuditStatus;
-  receivedAt: number;
-  completedAt?: number;
-  durationMs?: number;
-  filepath: string;
-  filename: string;
-  language: string;
-  line: number;
-  character: number;
-  prefix: string;
-  suffix: string;
-  prompt: string;
-  completion: string;
-  processedCompletion?: string;
-  displayedCompletion?: string;
-  modelProvider: string;
-  modelName: string;
-  apiBase: string;
-  completionOptions: Record<string, unknown>;
-  isMultiline: boolean;
-  manuallyTriggered: boolean;
-  cacheHit: boolean;
-  numLines: number;
-  previewOnly: boolean;
-  timedOut: boolean;
-  chunkCount: number;
-  filterReason?: string;
-  error?: { type: string; message: string; httpStatus?: number };
-  timing: Record<string, number>;
-  snippetSummary?: Record<string, number>;
-}
+export type { AuditStatus, AuditRecord } from "./audit/types.js";

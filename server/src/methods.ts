@@ -2,7 +2,7 @@ import * as path from "node:path";
 import type { AppConfig, CompletionRequest, JsonRpcRequest, JsonRpcResponse } from "./types.js";
 import { loadConfig } from "./config.js";
 import { CompletionEngine } from "./completion.js";
-import { AuditManager } from "./audit.js";
+import { AuditManager } from "./audit/index.js";
 
 export class MethodHandler {
   private config: AppConfig;
@@ -116,22 +116,34 @@ export class MethodHandler {
         completionOptions: audit.completionOptions,
         isMultiline: audit.isMultiline,
         chunkCount: audit.chunkCount,
+        timedOut: audit.timedOut,
+        previewOnly: audit.partialReturned,
+        partialReturned: audit.partialReturned,
+        reuseHit: audit.reuseHit,
+        reuseReason: audit.reuseReason,
         modelProvider: this.config.model.provider,
         modelName: this.config.model.model,
         apiBase: this.config.model.apiBase,
         snippetSummary: {
           ide: params.lspSnippets?.length ?? 0,
           edited: params.recentlyEditedRanges?.length ?? 0,
-          opened: params.recentlyVisitedRanges?.length ?? 0,
-          rootPath: 0,
-          imports: 0,
+          opened:
+            (params.recentlyVisitedRanges?.length ?? 0) +
+            (params.openedFileSnippets?.length ?? 0),
+          rootPath: params.workspaceConfigSnippets?.length ?? 0,
+          imports: params.importSnippets?.length ?? 0,
         },
-        timing: { promptRenderedAt: Date.now() },
+        timing: {
+          promptRenderedAt: Date.now(),
+          firstChunkAt: audit.timing.firstChunkAt,
+          llmCallStartAt: audit.timing.llmCallStartAt,
+          llmCallEndAt: audit.timing.llmCallEndAt,
+        },
       });
 
       if (!result) {
         this.audit.updateRecord(completionId, {
-          status: "filtered",
+          status: controller.signal.aborted ? "cancelled" : "filtered",
           filterReason: audit.filterReason ?? "empty",
           completedAt: Date.now(),
           durationMs: Date.now() - receivedAt,
@@ -175,6 +187,7 @@ export class MethodHandler {
       this.pendingCompletions.get(id)!.abort();
       this.pendingCompletions.delete(id);
     }
+    await this.completionEngine.cancelReuse();
     return { cancelled: true };
   }
 
