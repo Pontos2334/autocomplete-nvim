@@ -269,6 +269,12 @@ function M.setup(opts)
   config.setup(opts)
   set_idle_or_disabled()
   rpc.initialize()
+  vim.api.nvim_create_autocmd({ "VimLeavePre" }, {
+    group = augroup,
+    callback = function()
+      rpc.stop()
+    end,
+  })
   vim.api.nvim_create_autocmd({ "TextChangedI" }, {
     group = augroup,
     callback = function(args)

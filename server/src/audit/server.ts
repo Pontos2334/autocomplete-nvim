@@ -266,5 +266,7 @@ export function stopAuditServer(server: http.Server | null) {
   return new Promise<void>((resolve) => {
     if (!server) { resolve(); return; }
     server.close(() => resolve());
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
   });
 }

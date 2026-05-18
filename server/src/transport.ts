@@ -4,6 +4,8 @@ import type { JsonRpcRequest, JsonRpcResponse } from "./types.js";
 export class JsonRpcTransport {
   private rl: readline.Interface | null = null;
   private handler: ((request: JsonRpcRequest) => Promise<JsonRpcResponse>) | null = null;
+  private closeHandler: (() => void) | null = null;
+  private generation = 0;
 
   onMessage(
     handler: (request: JsonRpcRequest) => Promise<JsonRpcResponse>
@@ -11,8 +13,21 @@ export class JsonRpcTransport {
     this.handler = handler;
   }
 
+  onClose(handler: () => void): void {
+    this.closeHandler = handler;
+  }
+
   start(inputStream: NodeJS.ReadableStream = process.stdin, outputStream: NodeJS.WritableStream = process.stdout): void {
+    const generation = ++this.generation;
     this.rl = readline.createInterface({ input: inputStream });
+
+    this.rl.on("close", () => {
+      if (this.generation !== generation) {
+        return;
+      }
+      this.rl = null;
+      this.closeHandler?.();
+    });
 
     this.rl.on("line", async (line: string) => {
       if (!this.handler) return;
@@ -55,8 +70,9 @@ export class JsonRpcTransport {
 
   stop(): void {
     if (this.rl) {
-      this.rl.close();
+      const rl = this.rl;
       this.rl = null;
+      rl.close();
     }
   }
 }

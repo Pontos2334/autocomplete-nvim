@@ -6,10 +6,9 @@ local state = {
   job_id = nil,
   next_id = 1,
   pending = {},
-  initialized = false,
-  shutting_down = false,
-  stdout_buffer = "",
-  stderr_buffer = "",
+  initialized_session_id = nil,
+  session_id = 0,
+  closing_sessions = {},
 }
 
 local function send_raw(payload)
@@ -21,7 +20,37 @@ local function send_raw(payload)
   return true
 end
 
-local function handle_line(line)
+local function close_timer(timer)
+  if not timer then
+    return
+  end
+  pcall(function()
+    timer:stop()
+    timer:close()
+  end)
+end
+
+local function cancel_pending_timers(session_id)
+  for _, pending in pairs(state.pending) do
+    if pending.session_id == session_id then
+      close_timer(pending.timer)
+      pending.timer = nil
+    end
+  end
+end
+
+local function reject_pending_for_session(session_id, err)
+  for id, pending in pairs(state.pending) do
+    if pending.session_id == session_id then
+      close_timer(pending.timer)
+      pending.timer = nil
+      state.pending[id] = nil
+      pending.reject(err)
+    end
+  end
+end
+
+local function handle_line(session_id, line)
   if not line or line == "" then
     return
   end
@@ -30,14 +59,12 @@ local function handle_line(line)
     return
   end
   local pending = state.pending[message.id]
-  if not pending then
+  if not pending or pending.session_id ~= session_id then
     return
   end
   state.pending[message.id] = nil
-  if pending.timer then
-    pending.timer:stop()
-    pending.timer:close()
-  end
+  close_timer(pending.timer)
+  pending.timer = nil
   if message.error then
     pending.reject(message.error)
   else
@@ -84,38 +111,40 @@ function M.start()
     util.notify("Server not built: " .. opts.server_path .. ". Run npm install && npm run build in server/.", vim.log.levels.WARN)
     return false
   end
+  state.session_id = state.session_id + 1
+  local session_id = state.session_id
+  local stdout_buffer = ""
+  local stderr_buffer = ""
   state.job_id = vim.fn.jobstart({ opts.node_command, opts.server_path }, {
     stdout_buffered = false,
     stderr_buffered = false,
     on_stdout = function(_, data)
-      state.stdout_buffer = process_channel_lines(state.stdout_buffer, data, handle_line)
+      stdout_buffer = process_channel_lines(stdout_buffer, data, function(line)
+        handle_line(session_id, line)
+      end)
     end,
     on_stderr = function(_, data)
-      state.stderr_buffer = process_channel_lines(state.stderr_buffer, data, function(line)
+      stderr_buffer = process_channel_lines(stderr_buffer, data, function(line)
         if line and line:match("%S") then
           util.notify(line, vim.log.levels.DEBUG)
         end
       end)
     end,
-    on_exit = function(_, code)
-      local was_shutting_down = state.shutting_down
-      state.shutting_down = false
-      local was_running = state.job_id ~= nil
-      state.job_id = nil
-      state.initialized = false
-      state.stdout_buffer = ""
-      state.stderr_buffer = ""
-      for _, pending in pairs(state.pending) do
-        pending.reject({ message = "server exited with code " .. tostring(code) })
+    on_exit = function(job_id, code)
+      local is_current_job = state.job_id == job_id
+      if is_current_job then
+        state.job_id = nil
+        state.initialized_session_id = nil
       end
-      state.pending = {}
-      if was_running and not was_shutting_down and code ~= 0 then
+      reject_pending_for_session(session_id, { message = "server exited with code " .. tostring(code) })
+      if is_current_job and not state.closing_sessions[session_id] and code ~= 0 then
         util.notify("Autocomplete server exited unexpectedly (code " .. code .. "). It will restart on next trigger.", vim.log.levels.WARN)
       end
     end,
   })
   if state.job_id <= 0 then
     state.job_id = nil
+    state.closing_sessions[session_id] = nil
     util.notify("Failed to start autocomplete server", vim.log.levels.ERROR)
     return false
   end
@@ -126,12 +155,15 @@ function M.request(method, params, timeout_ms)
   if not M.start() then
     return nil, { message = "server not running" }
   end
-  if not state.initialized and method ~= "initialize" then
+  if state.initialized_session_id ~= state.session_id and method ~= "initialize" then
     local init_result, init_err = M.request("initialize", { configPath = config.get().config_path }, 10000)
     if init_err then
       return nil, init_err
     end
-    state.initialized = true
+    if state.closing_sessions[state.session_id] then
+      return nil, { message = "server shutting down" }, state.session_id
+    end
+    state.initialized_session_id = state.session_id
   end
   local id = state.next_id
   state.next_id = state.next_id + 1
@@ -139,8 +171,10 @@ function M.request(method, params, timeout_ms)
   if not co then
     error("rpc.request must be called from a coroutine")
   end
+  local session_id = state.session_id
   local timer = vim.loop.new_timer()
   state.pending[id] = {
+    session_id = session_id,
     resolve = function(result)
       coroutine.resume(co, result, nil)
     end,
@@ -153,21 +187,27 @@ function M.request(method, params, timeout_ms)
     local pending = state.pending[id]
     if pending then
       state.pending[id] = nil
+      close_timer(pending.timer)
+      pending.timer = nil
       pending.reject({ message = "request timed out" })
     end
   end)
   send_raw({ jsonrpc = "2.0", id = id, method = method, params = params or {} })
-  return coroutine.yield()
+  local result, err = coroutine.yield()
+  return result, err, session_id
 end
 
 function M.initialize()
-  if state.initialized and state.job_id then
+  if state.initialized_session_id == state.session_id and state.job_id then
     return
   end
   coroutine.wrap(function()
     local opts = config.get()
-    local result, err = M.request("initialize", { configPath = opts.config_path }, 10000)
+    local result, err, session_id = M.request("initialize", { configPath = opts.config_path }, 10000)
     if err then
+      if session_id and state.closing_sessions[session_id] then
+        return
+      end
       util.notify(
         "initialize failed: " .. (err.message or vim.inspect(err))
           .. " (node=" .. opts.node_command .. " server=" .. opts.server_path .. ")",
@@ -175,15 +215,21 @@ function M.initialize()
       )
       return
     end
-    state.initialized = true
+    if session_id and state.closing_sessions[session_id] then
+      return
+    end
+    state.initialized_session_id = session_id or state.session_id
     return result
   end)()
 end
 
 function M.request_async(method, params, callback, timeout_ms)
   coroutine.wrap(function()
-    local result, err = M.request(method, params, timeout_ms)
+    local result, err, session_id = M.request(method, params, timeout_ms)
     vim.schedule(function()
+      if session_id and state.closing_sessions[session_id] then
+        return
+      end
       callback(result, err)
     end)
   end)()
@@ -191,14 +237,19 @@ end
 
 function M.stop()
   if state.job_id then
-    state.shutting_down = true
-    pcall(send_raw, { jsonrpc = "2.0", id = state.next_id, method = "shutdown", params = {} })
-    vim.fn.jobstop(state.job_id)
+    local job_id = state.job_id
+    local session_id = state.session_id
+    if not state.closing_sessions[session_id] then
+      state.closing_sessions[session_id] = true
+      cancel_pending_timers(session_id)
+      local shutdown_id = state.next_id
+      state.next_id = state.next_id + 1
+      pcall(send_raw, { jsonrpc = "2.0", id = shutdown_id, method = "shutdown", params = {} })
+    end
+    pcall(vim.fn.chanclose, job_id, "stdin")
     state.job_id = nil
   end
-  state.initialized = false
-  state.stdout_buffer = ""
-  state.stderr_buffer = ""
+  state.initialized_session_id = nil
 end
 
 return M
