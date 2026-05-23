@@ -1,9 +1,9 @@
 export const DASHBOARD_HTML = `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>补全审计面板</title>
+<title>Completion Audit</title>
 <style>
 :root {
   --bg-root: #ffffff;
@@ -280,28 +280,28 @@ body { background: var(--bg-root); color: var(--text-primary); font-family: var(
 </head>
 <body>
 
-<div id="connBanner" class="conn-banner">连接断开，正在重连...</div>
+<div id="connBanner" class="conn-banner"></div>
 
 <div class="dashboard">
   <header class="dash-header">
     <div class="dash-logo">
       <div class="dash-logo-icon">A</div>
-      <span class="dash-logo-text">补全审计面板</span>
+      <span class="dash-logo-text" id="logoText"></span>
       <div class="status-dot" id="statusDot"></div>
     </div>
     <div class="dash-stats">
-      <span class="stat-chip" id="callCount">0 次调用</span>
-      <span class="stat-chip" id="cacheRate">缓存: -</span>
+      <span class="stat-chip" id="callCount"></span>
+      <span class="stat-chip" id="cacheRate"></span>
     </div>
-    <button class="btn-sm" id="clearBtn">清空</button>
+    <button class="btn-sm" id="clearBtn"></button>
   </header>
 
   <aside class="request-list">
     <div class="filter-bar">
-      <button class="filter-tab active" data-filter="all">全部</button>
-      <button class="filter-tab" data-filter="completed">完成</button>
-      <button class="filter-tab" data-filter="filtered">已过滤</button>
-      <button class="filter-tab" data-filter="error">错误</button>
+      <button class="filter-tab active" data-filter="all" id="filterAll"></button>
+      <button class="filter-tab" data-filter="completed" id="filterCompleted"></button>
+      <button class="filter-tab" data-filter="filtered" id="filterFiltered"></button>
+      <button class="filter-tab" data-filter="error" id="filterError"></button>
     </div>
     <div class="request-rows" id="requestRows"></div>
   </aside>
@@ -309,18 +309,18 @@ body { background: var(--bg-root); color: var(--text-primary); font-family: var(
   <main class="request-detail">
     <div class="detail-empty" id="detailEmpty">
       <div class="empty-icon">[A]</div>
-      <div class="empty-title">选择一个请求</div>
-      <div class="empty-sub">从左侧列表点击一个请求，查看 Prompt、补全结果和耗时详情。</div>
+      <div class="empty-title" id="emptyTitle"></div>
+      <div class="empty-sub" id="emptySub"></div>
     </div>
     <div id="detailContent" style="display:none">
       <nav class="detail-tabs" id="detailTabs">
-        <button class="tab-btn active" data-tab="overview">概览</button>
+        <button class="tab-btn active" data-tab="overview" id="tabOverview"></button>
         <button class="tab-btn" data-tab="prompt">Prompt</button>
-        <button class="tab-btn" data-tab="prefix">前缀</button>
-        <button class="tab-btn" data-tab="suffix">后缀</button>
-        <button class="tab-btn" data-tab="completion">补全结果</button>
-        <button class="tab-btn" data-tab="raw">原始数据</button>
-        <button class="tab-btn" data-tab="demo">FIM 测试</button>
+        <button class="tab-btn" data-tab="prefix" id="tabPrefix"></button>
+        <button class="tab-btn" data-tab="suffix" id="tabSuffix"></button>
+        <button class="tab-btn" data-tab="completion" id="tabCompletion"></button>
+        <button class="tab-btn" data-tab="raw" id="tabRaw"></button>
+        <button class="tab-btn" data-tab="demo" id="tabDemo"></button>
       </nav>
       <div class="tab-panels">
         <section class="tab-panel active" id="panel-overview"></section>
@@ -338,6 +338,118 @@ body { background: var(--bg-root); color: var(--text-primary); font-family: var(
 <div class="toast-container" id="toastContainer"></div>
 
 <script>
+var _lang = (navigator.language || 'en').startsWith('zh') ? 'zh' : 'en';
+var i18n = {
+  title:        { en: 'Completion Audit', zh: '\\u8865\\u5168\\u5ba1\\u8ba1\\u9762\\u677f' },
+  connLost:     { en: 'Connection lost, reconnecting...', zh: '\\u8fde\\u63a5\\u65ad\\u5f00\\uff0c\\u6b63\\u5728\\u91cd\\u8fde...' },
+  calls:        { en: ' calls', zh: ' \\u6b21\\u8c03\\u7528' },
+  cacheLabel:   { en: 'Cache: ', zh: '\\u7f13\\u5b58: ' },
+  clear:        { en: 'Clear', zh: '\\u6e05\\u7a7a' },
+  all:          { en: 'All', zh: '\\u5168\\u90e8' },
+  completed:    { en: 'Completed', zh: '\\u5b8c\\u6210' },
+  filtered:     { en: 'Filtered', zh: '\\u5df2\\u8fc7\\u6ee4' },
+  error:        { en: 'Error', zh: '\\u9519\\u8bef' },
+  selectReq:    { en: 'Select a request', zh: '\\u9009\\u62e9\\u4e00\\u4e2a\\u8bf7\\u6c42' },
+  emptySub:     { en: 'Click a request from the list to view prompt, completion, and timing details.', zh: '\\u4ece\\u5de6\\u4fa7\\u5217\\u8868\\u70b9\\u51fb\\u4e00\\u4e2a\\u8bf7\\u6c42\\uff0c\\u67e5\\u770b Prompt\\u3001\\u8865\\u5168\\u7ed3\\u679c\\u548c\\u8017\\u65f6\\u8be6\\u60c5\\u3002' },
+  overview:     { en: 'Overview', zh: '\\u6982\\u89c8' },
+  prefix:       { en: 'Prefix', zh: '\\u524d\\u7f00' },
+  suffix:       { en: 'Suffix', zh: '\\u540e\\u7f00' },
+  completion:   { en: 'Completion', zh: '\\u8865\\u5168\\u7ed3\\u679c' },
+  raw:          { en: 'Raw', zh: '\\u539f\\u59cb\\u6570\\u636e' },
+  fimTest:      { en: 'FIM Test', zh: 'FIM \\u6d4b\\u8bd5' },
+  copied:       { en: 'Copied', zh: '\\u5df2\\u590d\\u5236' },
+  copy:         { en: 'Copy', zh: '\\u590d\\u5236' },
+  cleared:      { en: 'Cleared', zh: '\\u5df2\\u6e05\\u7a7a' },
+  lines:        { en: ' lines', zh: '\\u884c' },
+  cache:        { en: 'Cache', zh: '\\u7f13\\u5b58' },
+  reuse:        { en: 'Reuse', zh: '\\u590d\\u7528' },
+  multi:        { en: 'Multi', zh: '\\u591a\\u884c' },
+  yes:          { en: 'Yes', zh: '\\u662f' },
+  no:           { en: 'No', zh: '\\u5426' },
+  hit:          { en: 'Hit', zh: '\\u547d\\u4e2d' },
+  miss:         { en: 'Miss', zh: '\\u672a\\u547d\\u4e2d' },
+  filterReason: { en: 'Filter reason: ', zh: '\\u8fc7\\u6ee4\\u539f\\u56e0: ' },
+  chars:        { en: ' chars', zh: ' \\u5b57\\u7b26' },
+  timeline:     { en: 'Timeline', zh: '\\u65f6\\u95f4\\u7ebf' },
+  params:       { en: 'Parameters', zh: '\\u53c2\\u6570' },
+  contextSnip:  { en: 'Context Snippets', zh: '\\u4e0a\\u4e0b\\u6587\\u7247\\u6bb5' },
+  req:          { en: 'Request', zh: '\\u8bf7\\u6c42' },
+  llmStart:     { en: 'LLM Start', zh: 'LLM \\u5f00\\u59cb' },
+  firstChunk:   { en: 'First Chunk', zh: '\\u9996\\u5305' },
+  llmEnd:       { en: 'LLM End', zh: 'LLM \\u7ed3\\u675f' },
+  complete:     { en: 'Complete', zh: '\\u5b8c\\u6210' },
+  file:         { en: 'File', zh: '\\u6587\\u4ef6' },
+  language:     { en: 'Language', zh: '\\u8bed\\u8a00' },
+  model:        { en: 'Model', zh: '\\u6a21\\u578b' },
+  apiBase:      { en: 'API Base', zh: 'API \\u5730\\u5740' },
+  duration:     { en: 'Duration', zh: '\\u8017\\u65f6' },
+  lineCount:    { en: 'Lines', zh: '\\u884c\\u6570' },
+  chunkCount:   { en: 'Chunks', zh: '\\u5206\\u5757\\u6570' },
+  reuseReason:  { en: 'Reuse Reason', zh: '\\u590d\\u7528\\u539f\\u56e0' },
+  manual:       { en: 'Manual', zh: '\\u624b\\u52a8\\u89e6\\u53d1' },
+  softTimeout:  { en: 'Soft Timeout', zh: '\\u8f6f\\u8d85\\u65f6\\u8fd4\\u56de' },
+  timeout:      { en: 'Timeout', zh: '\\u8d85\\u65f6' },
+  rootPath:     { en: 'Root Path', zh: '\\u6839\\u8def\\u5f84' },
+  imports:      { en: 'Imports', zh: '\\u5bfc\\u5165' },
+  editRange:    { en: 'Edit Range', zh: '\\u7f16\\u8f91\\u8303\\u56f4' },
+  opened:       { en: 'Opened', zh: '\\u5df2\\u6253\\u5f00' },
+  fullPrompt:   { en: 'Full Prompt', zh: '\\u5b8c\\u6574 Prompt' },
+  prefixSlash:  { en: 'Prefix', zh: 'Prefix / \\u524d\\u7f00' },
+  suffixSlash:  { en: 'Suffix', zh: 'Suffix / \\u540e\\u7f00' },
+  llmOutput:    { en: 'LLM Raw Output', zh: 'LLM \\u539f\\u59cb\\u8f93\\u51fa' },
+  postproc:     { en: 'Post-processed', zh: '\\u540e\\u5904\\u7406\\u7ed3\\u679c' },
+  finalDisp:    { en: 'Final Display', zh: '\\u6700\\u7ec8\\u663e\\u793a' },
+  compOpts:     { en: 'Completion Options', zh: '\\u8865\\u5168\\u53c2\\u6570' },
+  readConfig:   { en: 'Reading model config...', zh: '\\u6b63\\u5728\\u8bfb\\u53d6\\u6a21\\u578b\\u914d\\u7f6e...' },
+  idle:         { en: 'Idle', zh: '\\u7a7a\\u95f2' },
+  editSrc:      { en: 'Editable Source', zh: '\\u53ef\\u7f16\\u8f91\\u6e90\\u7801' },
+  cursorNote:   { en: 'textarea cursor = test cursor', zh: 'textarea \\u5149\\u6807 = \\u6d4b\\u8bd5\\u5149\\u6807' },
+  lineNum:      { en: 'Line', zh: '\\u884c\\u53f7' },
+  column:       { en: 'Col', zh: '\\u5217' },
+  resetEx:      { en: 'Reset', zh: '\\u6062\\u590d\\u793a\\u4f8b' },
+  simComp:      { en: 'Simulated Completion', zh: '\\u6a21\\u62df\\u8865\\u5168\\u6587\\u672c' },
+  editable:     { en: 'Editable', zh: '\\u53ef\\u624b\\u52a8\\u7f16\\u8f91' },
+  liveCtx:      { en: 'Live Context', zh: '\\u5b9e\\u65f6\\u4e0a\\u4e0b\\u6587' },
+  cursorOff:    { en: 'Cursor Offset', zh: '\\u5149\\u6807\\u504f\\u79fb' },
+  cursorPos:    { en: 'Cursor Position', zh: '\\u5149\\u6807\\u4f4d\\u7f6e' },
+  prefixCh:     { en: 'Prefix Chars', zh: 'Prefix \\u5b57\\u7b26' },
+  suffixCh:     { en: 'Suffix Chars', zh: 'Suffix \\u5b57\\u7b26' },
+  liveFim:      { en: 'Live FIM Request', zh: '\\u771f\\u5b9e FIM \\u8bf7\\u6c42' },
+  proxyNote:    { en: 'Proxied via audit server, API key not exposed', zh: '\\u901a\\u8fc7 audit server \\u4ee3\\u7406\\uff0c\\u4e0d\\u66b4\\u9732 API Key' },
+  runFim:       { en: 'Run FIM', zh: '\\u8fd0\\u884c FIM' },
+  stop:         { en: 'Stop', zh: '\\u505c\\u6b62' },
+  modelOut:     { en: 'Model Output', zh: '\\u6a21\\u578b\\u8f93\\u51fa' },
+  noOutput:     { en: '(no output yet)', zh: '(\\u5c1a\\u65e0\\u8f93\\u51fa)' },
+  requesting:   { en: 'Requesting...', zh: '\\u8bf7\\u6c42\\u4e2d...' },
+  connected:    { en: 'Connected: ', zh: '\\u5df2\\u8fde\\u63a5: ' },
+  reqFailed:    { en: 'Request failed: ', zh: '\\u8bf7\\u6c42\\u5931\\u8d25: ' },
+  done:         { en: 'Done', zh: '\\u5b8c\\u6210' },
+  stopped:      { en: 'Stopped', zh: '\\u5df2\\u505c\\u6b62' },
+  pass:         { en: 'Pass', zh: '\\u901a\\u8fc7' },
+  fail:         { en: 'Fail', zh: '\\u672a\\u901a\\u8fc7' },
+};
+function t(k) { return (i18n[k] && i18n[k][_lang]) || k; }
+
+function applyI18nToHtml() {
+  document.documentElement.lang = _lang === 'zh' ? 'zh-CN' : 'en';
+  document.title = t('title');
+  document.getElementById('connBanner').textContent = t('connLost');
+  document.getElementById('logoText').textContent = t('title');
+  document.getElementById('clearBtn').textContent = t('clear');
+  document.getElementById('filterAll').textContent = t('all');
+  document.getElementById('filterCompleted').textContent = t('completed');
+  document.getElementById('filterFiltered').textContent = t('filtered');
+  document.getElementById('filterError').textContent = t('error');
+  document.getElementById('emptyTitle').textContent = t('selectReq');
+  document.getElementById('emptySub').textContent = t('emptySub');
+  document.getElementById('tabOverview').textContent = t('overview');
+  document.getElementById('tabPrefix').textContent = t('prefix');
+  document.getElementById('tabSuffix').textContent = t('suffix');
+  document.getElementById('tabCompletion').textContent = t('completion');
+  document.getElementById('tabRaw').textContent = t('raw');
+  document.getElementById('tabDemo').textContent = t('fimTest');
+}
+
 var state = {
   records: [],
   selectedId: null,
@@ -362,12 +474,12 @@ function getStatusDot(r) {
 }
 function toast(msg) {
   var c = document.getElementById('toastContainer');
-  var t = document.createElement('div');
-  t.className = 'toast'; t.textContent = msg;
-  c.appendChild(t);
-  setTimeout(function() { t.classList.add('out'); setTimeout(function() { t.remove(); }, 300); }, 2000);
+  var te = document.createElement('div');
+  te.className = 'toast'; te.textContent = msg;
+  c.appendChild(te);
+  setTimeout(function() { te.classList.add('out'); setTimeout(function() { te.remove(); }, 300); }, 2000);
 }
-function copyText(text) { navigator.clipboard.writeText(text).then(function() { toast('已复制'); }).catch(function() {}); }
+function copyText(text) { navigator.clipboard.writeText(text).then(function() { toast(t('copied')); }).catch(function() {}); }
 function syntaxHighlight(obj) {
   var json = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
   json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -412,7 +524,7 @@ function fetchRecords() {
     state.totalCalls = data.total || state.records.length;
     state.cacheHits = state.records.filter(function(r) { return r.cacheHit; }).length;
     renderList(); updateStats();
-  }).catch(function(e) { console.error('获取记录失败:', e); });
+  }).catch(function(e) { console.error('Failed to fetch records:', e); });
 }
 
 function fetchDetail(id) {
@@ -420,13 +532,13 @@ function fetchDetail(id) {
     if (res.ok) return res.json();
   }).then(function(data) {
     if (data) { state.selectedDetail = data; renderDetail(); }
-  }).catch(function(e) { console.error('获取详情失败:', e); });
+  }).catch(function(e) { console.error('Failed to fetch detail:', e); });
 }
 
 function updateStats() {
-  document.getElementById('callCount').textContent = state.totalCalls + ' 次调用';
+  document.getElementById('callCount').textContent = state.totalCalls + t('calls');
   var rate = state.totalCalls > 0 ? Math.round(state.cacheHits / state.totalCalls * 100) : 0;
-  document.getElementById('cacheRate').textContent = '缓存: ' + rate + '%';
+  document.getElementById('cacheRate').textContent = t('cacheLabel') + rate + '%';
 }
 
 function renderList() {
@@ -448,10 +560,10 @@ function renderList() {
       '<div class="row-bottom">' +
         '<span>' + esc(r.modelName || '') + '</span>' +
         '<span>' + fmtMs(r.durationMs) + '</span>' +
-        '<span>' + (r.numLines || 0) + '行</span>' +
-        (r.cacheHit ? '<span class="row-badge cache">缓存</span>' : '') +
-        (r.reuseHit ? '<span class="row-badge cache">复用</span>' : '') +
-        (r.isMultiline ? '<span class="row-badge multi">多行</span>' : '') +
+        '<span>' + (r.numLines || 0) + t('lines') + '</span>' +
+        (r.cacheHit ? '<span class="row-badge cache">' + t('cache') + '</span>' : '') +
+        (r.reuseHit ? '<span class="row-badge cache">' + t('reuse') + '</span>' : '') +
+        (r.isMultiline ? '<span class="row-badge multi">' + t('multi') + '</span>' : '') +
         (r.filterReason ? '<span class="row-badge filtered">' + esc(r.filterReason) + '</span>' : '') +
       '</div>' +
     '</div>';
@@ -481,14 +593,14 @@ function renderDetail() {
 }
 
 function renderOverview(r) {
-  var t = r.timing || {};
+  var tm = r.timing || {};
   var steps = [
-    { label: '请求', at: t.requestStartAt },
-    { label: 'Prompt', at: t.promptRenderedAt },
-    { label: 'LLM 开始', at: t.llmCallStartAt },
-    { label: '首包', at: t.firstChunkAt },
-    { label: 'LLM 结束', at: t.llmCallEndAt },
-    { label: '完成', at: t.completedAt || r.completedAt },
+    { label: t('req'), at: tm.requestStartAt },
+    { label: 'Prompt', at: tm.promptRenderedAt },
+    { label: t('llmStart'), at: tm.llmCallStartAt },
+    { label: t('firstChunk'), at: tm.firstChunkAt },
+    { label: t('llmEnd'), at: tm.llmCallEndAt },
+    { label: t('complete'), at: tm.completedAt || r.completedAt },
   ];
 
   var tlHtml = '<div class="timeline">';
@@ -506,31 +618,31 @@ function renderOverview(r) {
   tlHtml += '</div>';
 
   var paramsHtml = '<div class="params-grid">' +
-    kv('文件', esc(r.filename) + ':' + r.line + ':' + r.character) +
-    kv('语言', esc(r.language)) +
-    kv('模型', esc(r.modelProvider) + '/' + esc(r.modelName)) +
-    kv('API 地址', esc(r.apiBase)) +
-    kv('耗时', fmtMs(r.durationMs)) +
-    kv('行数', r.numLines) +
-    kv('分块数', r.chunkCount) +
-    kv('缓存', badge(r.cacheHit, '命中', '未命中')) +
-    kv('复用', badge(r.reuseHit, '命中', '未命中')) +
-    kv('复用原因', esc(r.reuseReason || '-')) +
-    kv('多行', badge(r.isMultiline)) +
-    kv('手动触发', badge(r.manuallyTriggered)) +
-    kv('软超时返回', badge(r.partialReturned || r.previewOnly)) +
-    kv('超时', badge(r.timedOut)) +
+    kv(t('file'), esc(r.filename) + ':' + r.line + ':' + r.character) +
+    kv(t('language'), esc(r.language)) +
+    kv(t('model'), esc(r.modelProvider) + '/' + esc(r.modelName)) +
+    kv(t('apiBase'), esc(r.apiBase)) +
+    kv(t('duration'), fmtMs(r.durationMs)) +
+    kv(t('lineCount'), r.numLines) +
+    kv(t('chunkCount'), r.chunkCount) +
+    kv(t('cache'), badge(r.cacheHit, t('hit'), t('miss'))) +
+    kv(t('reuse'), badge(r.reuseHit, t('hit'), t('miss'))) +
+    kv(t('reuseReason'), esc(r.reuseReason || '-')) +
+    kv(t('multi'), badge(r.isMultiline)) +
+    kv(t('manual'), badge(r.manuallyTriggered)) +
+    kv(t('softTimeout'), badge(r.partialReturned || r.previewOnly)) +
+    kv(t('timeout'), badge(r.timedOut)) +
   '</div>';
 
   var snip = r.snippetSummary;
   var snipHtml = '';
   if (snip) {
     snipHtml = '<div class="params-grid">' +
-      kv('根路径', snip.rootPath) +
-      kv('导入', snip.imports) +
+      kv(t('rootPath'), snip.rootPath) +
+      kv(t('imports'), snip.imports) +
       kv('IDE/LSP', snip.ide) +
-      kv('编辑范围', snip.edited) +
-      kv('已打开', snip.opened) +
+      kv(t('editRange'), snip.edited) +
+      kv(t('opened'), snip.opened) +
     '</div>';
   }
 
@@ -539,32 +651,32 @@ function renderOverview(r) {
     content += '<div class="error-block"><div class="error-type">' + esc(r.error.type) + '</div><div class="error-msg">' + esc(r.error.message) + '</div></div>';
   }
   if (r.filterReason) {
-    content += '<div class="filter-block"><div class="filter-type">过滤原因: ' + esc(r.filterReason) + '</div></div>';
+    content += '<div class="filter-block"><div class="filter-type">' + t('filterReason') + esc(r.filterReason) + '</div></div>';
   }
-  content += section('时间线', tlHtml);
-  content += section('参数', paramsHtml);
-  if (snipHtml) content += section('上下文片段', snipHtml);
+  content += section(t('timeline'), tlHtml);
+  content += section(t('params'), paramsHtml);
+  if (snipHtml) content += section(t('contextSnip'), snipHtml);
 
   document.getElementById('panel-overview').innerHTML = content;
 }
 
 function renderPrompt(r) {
   var html = '';
-  html += codeBlock('完整 Prompt (' + (r.prompt || '').length + ' 字符)', r.prompt, 'prompt-full');
+  html += codeBlock(t('fullPrompt') + ' (' + (r.prompt || '').length + t('chars') + ')', r.prompt, 'prompt-full');
   document.getElementById('panel-prompt').innerHTML = html;
   bindCopyButtons();
 }
 
 function renderPrefix(r) {
   var html = '';
-  html += codeBlock('Prefix / 前缀 (' + (r.prefix || '').length + ' 字符)', r.prefix, 'prompt-prefix');
+  html += codeBlock(t('prefixSlash') + ' (' + (r.prefix || '').length + t('chars') + ')', r.prefix, 'prompt-prefix');
   document.getElementById('panel-prefix').innerHTML = html;
   bindCopyButtons();
 }
 
 function renderSuffix(r) {
   var html = '';
-  html += codeBlock('Suffix / 后缀 (' + (r.suffix || '').length + ' 字符)', r.suffix, 'prompt-suffix');
+  html += codeBlock(t('suffixSlash') + ' (' + (r.suffix || '').length + t('chars') + ')', r.suffix, 'prompt-suffix');
   document.getElementById('panel-suffix').innerHTML = html;
   bindCopyButtons();
 }
@@ -575,17 +687,17 @@ function renderCompletion(r) {
     html += '<div class="error-block"><div class="error-type">' + esc(r.error.type) + '</div><div class="error-msg">' + esc(r.error.message) + '</div></div>';
   }
   if (r.filterReason) {
-    html += '<div class="filter-block"><div class="filter-type">过滤原因: ' + esc(r.filterReason) + '</div></div>';
+    html += '<div class="filter-block"><div class="filter-type">' + t('filterReason') + esc(r.filterReason) + '</div></div>';
   }
-  html += codeBlock('LLM 原始输出 (' + (r.completion || '').length + ' 字符)', r.completion, 'comp-raw');
+  html += codeBlock(t('llmOutput') + ' (' + (r.completion || '').length + t('chars') + ')', r.completion, 'comp-raw');
   if (r.processedCompletion !== undefined) {
-    html += codeBlock('后处理结果 (' + (r.processedCompletion || '').length + ' 字符)', r.processedCompletion, 'comp-processed');
+    html += codeBlock(t('postproc') + ' (' + (r.processedCompletion || '').length + t('chars') + ')', r.processedCompletion, 'comp-processed');
   }
   if (r.displayedCompletion !== undefined) {
-    html += codeBlock('最终显示 (' + (r.displayedCompletion || '').length + ' 字符)', r.displayedCompletion, 'comp-displayed');
+    html += codeBlock(t('finalDisp') + ' (' + (r.displayedCompletion || '').length + t('chars') + ')', r.displayedCompletion, 'comp-displayed');
   }
   if (r.completionOptions) {
-    html += codeBlock('补全参数', JSON.stringify(r.completionOptions, null, 2), 'comp-options');
+    html += codeBlock(t('compOpts'), JSON.stringify(r.completionOptions, null, 2), 'comp-options');
   }
   document.getElementById('panel-completion').innerHTML = html;
   bindCopyButtons();
@@ -604,15 +716,15 @@ function kv(key, val) {
 }
 
 function badge(on, trueText, falseText) {
-  if (on) return '<span class="badge badge-on">' + (trueText || '是') + '</span>';
-  return '<span class="badge badge-off">' + (falseText || '否') + '</span>';
+  if (on) return '<span class="badge badge-on">' + (trueText || t('yes')) + '</span>';
+  return '<span class="badge badge-off">' + (falseText || t('no')) + '</span>';
 }
 
 function codeBlock(title, content, id) {
   return '<div class="code-block">' +
     '<div class="code-header">' +
       '<span>' + esc(title) + '</span>' +
-      '<button class="copy-btn" data-copy-target="' + id + '">复制</button>' +
+      '<button class="copy-btn" data-copy-target="' + id + '">' + t('copy') + '</button>' +
     '</div>' +
     '<pre class="code-body" id="' + id + '">' + esc(content || '') + '</pre>' +
   '</div>';
@@ -627,20 +739,20 @@ function bindCopyButtons() {
   });
 }
 
-// 筛选标签
+// Filter tabs
 document.querySelectorAll('.filter-tab').forEach(function(tab) {
   tab.addEventListener('click', function() {
-    document.querySelectorAll('.filter-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.filter-tab').forEach(function(tt) { tt.classList.remove('active'); });
     tab.classList.add('active');
     state.activeFilter = tab.dataset.filter;
     renderList();
   });
 });
 
-// 详情标签页
+// Detail tabs
 document.querySelectorAll('.tab-btn').forEach(function(tab) {
   tab.addEventListener('click', function() {
-    document.querySelectorAll('.tab-btn').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.tab-btn').forEach(function(tt) { tt.classList.remove('active'); });
     tab.classList.add('active');
     state.activeTab = tab.dataset.tab;
     document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
@@ -648,7 +760,7 @@ document.querySelectorAll('.tab-btn').forEach(function(tab) {
   });
 });
 
-// 清空
+// Clear
 document.getElementById('clearBtn').addEventListener('click', function() {
   fetch('/audit/api/records', { method: 'DELETE' }).then(function() {
     state.records = []; state.totalCalls = 0; state.cacheHits = 0;
@@ -656,7 +768,7 @@ document.getElementById('clearBtn').addEventListener('click', function() {
     renderList(); updateStats();
     document.getElementById('detailEmpty').style.display = '';
     document.getElementById('detailContent').style.display = 'none';
-    toast('已清空');
+    toast(t('cleared'));
   });
 });
 
@@ -692,34 +804,34 @@ function initDemoPanel() {
   var panel = document.getElementById('panel-demo');
   panel.innerHTML =
     '<div class="demo-status-bar">' +
-      '<span class="demo-pill" id="demoServerStatus">正在读取模型配置...</span>' +
-      '<span class="demo-pill" id="demoRequestStatus">空闲</span>' +
+      '<span class="demo-pill" id="demoServerStatus">' + t('readConfig') + '</span>' +
+      '<span class="demo-pill" id="demoRequestStatus">' + t('idle') + '</span>' +
     '</div>' +
     '<div style="padding:0 12px 12px">' +
     '<div class="demo-split">' +
       '<div class="demo-input">' +
         '<div class="demo-card">' +
-          '<div class="demo-card-head"><span class="demo-card-title">可编辑源码</span><span class="demo-card-note">textarea 光标 = 测试光标</span></div>' +
+          '<div class="demo-card-head"><span class="demo-card-title">' + t('editSrc') + '</span><span class="demo-card-note">' + t('cursorNote') + '</span></div>' +
           '<div class="demo-toolbar">' +
-            '<div class="demo-field"><label>行号</label><input id="demoLine" type="number" min="1" step="1"></div>' +
-            '<div class="demo-field"><label>列</label><input id="demoChar" type="number" min="0" step="1"></div>' +
-            '<button class="demo-btn" id="demoReset">恢复示例</button>' +
+            '<div class="demo-field"><label>' + t('lineNum') + '</label><input id="demoLine" type="number" min="1" step="1"></div>' +
+            '<div class="demo-field"><label>' + t('column') + '</label><input id="demoChar" type="number" min="0" step="1"></div>' +
+            '<button class="demo-btn" id="demoReset">' + t('resetEx') + '</button>' +
           '</div>' +
           '<textarea class="demo-textarea code-editor" id="demoCode" spellcheck="false"></textarea>' +
         '</div>' +
         '<div class="demo-card">' +
-          '<div class="demo-card-head"><span class="demo-card-title">模拟补全文本</span><span class="demo-card-note">可手动编辑</span></div>' +
+          '<div class="demo-card-head"><span class="demo-card-title">' + t('simComp') + '</span><span class="demo-card-note">' + t('editable') + '</span></div>' +
           '<textarea class="demo-textarea comp-input" id="demoSimCompletion" spellcheck="false"></textarea>' +
         '</div>' +
       '</div>' +
       '<div class="demo-output">' +
         '<div class="demo-card">' +
-          '<div class="demo-card-head"><span class="demo-card-title">实时上下文</span></div>' +
+          '<div class="demo-card-head"><span class="demo-card-title">' + t('liveCtx') + '</span></div>' +
           '<div class="demo-metrics">' +
-            '<div class="demo-metric"><div class="demo-metric-label">光标偏移</div><div class="demo-metric-value" id="demoOffset">0</div></div>' +
-            '<div class="demo-metric"><div class="demo-metric-label">光标位置</div><div class="demo-metric-value" id="demoCursor">1:0</div></div>' +
-            '<div class="demo-metric"><div class="demo-metric-label">Prefix 字符</div><div class="demo-metric-value" id="demoPrefixLen">0</div></div>' +
-            '<div class="demo-metric"><div class="demo-metric-label">Suffix 字符</div><div class="demo-metric-value" id="demoSuffixLen">0</div></div>' +
+            '<div class="demo-metric"><div class="demo-metric-label">' + t('cursorOff') + '</div><div class="demo-metric-value" id="demoOffset">0</div></div>' +
+            '<div class="demo-metric"><div class="demo-metric-label">' + t('cursorPos') + '</div><div class="demo-metric-value" id="demoCursor">1:0</div></div>' +
+            '<div class="demo-metric"><div class="demo-metric-label">' + t('prefixCh') + '</div><div class="demo-metric-value" id="demoPrefixLen">0</div></div>' +
+            '<div class="demo-metric"><div class="demo-metric-label">' + t('suffixCh') + '</div><div class="demo-metric-value" id="demoSuffixLen">0</div></div>' +
           '</div>' +
           '<div class="demo-grid2">' +
             '<div class="demo-block"><div class="demo-block-label">Prefix</div><pre class="demo-pre" id="demoPrefixOut"></pre></div>' +
@@ -728,15 +840,15 @@ function initDemoPanel() {
           '<div class="demo-checks" id="demoChecks"></div>' +
         '</div>' +
         '<div class="demo-card">' +
-          '<div class="demo-card-head"><span class="demo-card-title">真实 FIM 请求</span><span class="demo-card-note">通过 audit server 代理，不暴露 API Key</span></div>' +
+          '<div class="demo-card-head"><span class="demo-card-title">' + t('liveFim') + '</span><span class="demo-card-note">' + t('proxyNote') + '</span></div>' +
           '<div class="demo-toolbar">' +
             '<div class="demo-field"><label>max_tokens</label><input id="demoMaxTokens" type="number" value="128" min="1" max="4096"></div>' +
             '<div class="demo-field"><label>temperature</label><input id="demoTemp" type="number" value="0.01" min="0" max="2" step="0.01"></div>' +
-            '<button class="demo-btn primary" id="demoRun">运行 FIM</button>' +
-            '<button class="demo-btn danger" id="demoStop" disabled>停止</button>' +
+            '<button class="demo-btn primary" id="demoRun">' + t('runFim') + '</button>' +
+            '<button class="demo-btn danger" id="demoStop" disabled>' + t('stop') + '</button>' +
           '</div>' +
           '<div style="padding:10px 12px">' +
-            '<div class="demo-block-label">模型输出</div>' +
+            '<div class="demo-block-label">' + t('modelOut') + '</div>' +
             '<pre class="demo-pre" id="demoRealOutput" style="min-height:100px"></pre>' +
           '</div>' +
         '</div>' +
@@ -788,21 +900,21 @@ function demoRenderAll() {
   document.getElementById('demoSuffixLen').textContent = String(ctx.suffix.length);
   document.getElementById('demoPrefixOut').textContent = ctx.prefix;
   document.getElementById('demoSuffixOut').textContent = ctx.suffix;
-  document.getElementById('demoRealOutput').textContent = demoState.realCompletion || '(尚无输出)';
+  document.getElementById('demoRealOutput').textContent = demoState.realCompletion || t('noOutput');
   var checksEl = document.getElementById('demoChecks');
   checksEl.innerHTML = '';
-  checksEl.appendChild(demoMakeCheck('suffix 包含 app.listen', ctx.suffix.includes('app.listen')));
-  checksEl.appendChild(demoMakeCheck('suffix 包含 module.exports', ctx.suffix.includes('module.exports')));
-  checksEl.appendChild(demoMakeCheck('模拟输出被 transform 截断为空', simTransform.output.trim().length === 0));
-  checksEl.appendChild(demoMakeCheck('模拟去重后 ' + simDedupe.linesToKeep + '/' + simDedupe.originalLines + ' 行', simDedupe.linesToKeep < simDedupe.originalLines));
-  checksEl.appendChild(demoMakeCheck('真实去重后 ' + realDedupe.linesToKeep + '/' + realDedupe.originalLines + ' 行', realDedupe.linesToKeep < realDedupe.originalLines));
+  checksEl.appendChild(demoMakeCheck('suffix contains app.listen', ctx.suffix.includes('app.listen')));
+  checksEl.appendChild(demoMakeCheck('suffix contains module.exports', ctx.suffix.includes('module.exports')));
+  checksEl.appendChild(demoMakeCheck('simulated output truncated to empty by transform', simTransform.output.trim().length === 0));
+  checksEl.appendChild(demoMakeCheck('simulated dedup ' + simDedupe.linesToKeep + '/' + simDedupe.originalLines + ' lines', simDedupe.linesToKeep < simDedupe.originalLines));
+  checksEl.appendChild(demoMakeCheck('real dedup ' + realDedupe.linesToKeep + '/' + realDedupe.originalLines + ' lines', realDedupe.linesToKeep < realDedupe.originalLines));
 }
 
 function demoMakeCheck(label, pass) {
   var row = document.createElement('div'); row.className = 'demo-check';
   var code = document.createElement('code'); code.textContent = label;
-  var badge = document.createElement('span'); badge.className = 'demo-check-pass ' + (pass ? 'yes' : 'no'); badge.textContent = pass ? '通过' : '未通过';
-  row.appendChild(code); row.appendChild(badge);
+  var b = document.createElement('span'); b.className = 'demo-check-pass ' + (pass ? 'yes' : 'no'); b.textContent = pass ? t('pass') : t('fail');
+  row.appendChild(code); row.appendChild(b);
   return row;
 }
 
@@ -895,7 +1007,7 @@ function demoRunFim() {
   document.getElementById('demoRun').disabled = true;
   document.getElementById('demoStop').disabled = false;
   var statusEl = document.getElementById('demoRequestStatus');
-  statusEl.textContent = '请求中...';
+  statusEl.textContent = t('requesting');
   statusEl.className = 'demo-pill warn';
   demoRenderAll();
 
@@ -909,7 +1021,7 @@ function demoRunFim() {
     }),
     signal: demoState.abortController.signal,
   }).then(function(resp) {
-    if (!resp.ok || !resp.body) throw new Error('请求失败: ' + resp.status);
+    if (!resp.ok || !resp.body) throw new Error(t('reqFailed') + resp.status);
     var reader = resp.body.getReader();
     var decoder = new TextDecoder();
     var buffer = '';
@@ -923,7 +1035,7 @@ function demoRunFim() {
           if (!lines[i].trim()) continue;
           try {
             var event = JSON.parse(lines[i]);
-            if (event.type === 'meta') { statusEl.textContent = '已连接: ' + event.model; }
+            if (event.type === 'meta') { statusEl.textContent = t('connected') + event.model; }
             else if (event.type === 'chunk') { demoState.realCompletion += event.text; demoRenderAll(); }
             else if (event.type === 'error') throw new Error(event.message);
           } catch(ex) { if (ex.message && ex.message.indexOf('JSON') === -1) throw ex; }
@@ -933,9 +1045,9 @@ function demoRunFim() {
     }
     return readChunk();
   }).then(function() {
-    statusEl.textContent = '完成'; statusEl.className = 'demo-pill good';
+    statusEl.textContent = t('done'); statusEl.className = 'demo-pill good';
   }).catch(function(err) {
-    if (err.name === 'AbortError') { statusEl.textContent = '已停止'; statusEl.className = 'demo-pill warn'; }
+    if (err.name === 'AbortError') { statusEl.textContent = t('stopped'); statusEl.className = 'demo-pill warn'; }
     else { statusEl.textContent = err.message; statusEl.className = 'demo-pill warn'; }
   }).finally(function() {
     demoState.abortController = null;
@@ -952,7 +1064,8 @@ document.querySelectorAll('.tab-btn').forEach(function(tab) {
   });
 });
 
-// 初始化
+// Init
+applyI18nToHtml();
 fetchRecords();
 connectSSE();
 </script>

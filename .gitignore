@@ -7,3 +7,8 @@ server/dist/
 *.db
 *.db-shm
 *.db-wal
+.DS_Store
+*.swp
+*.swo
+*~
+.env*

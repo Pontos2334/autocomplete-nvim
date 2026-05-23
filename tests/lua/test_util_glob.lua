@@ -6,9 +6,9 @@ local util = require("autocomplete_nvim.util")
 T.describe("util.matches_glob", function()
   -- *.ext patterns
   T.it("matches *.md for markdown files", function()
-    T.assert_true(util.matches_glob("/home/user/README.md", "*.md"))
+    T.assert_true(util.matches_glob("/tmp/project/README.md", "*.md"))
     T.assert_true(util.matches_glob("notes.md", "*.md"))
-    T.assert_false(util.matches_glob("/home/user/main.ts", "*.md"))
+    T.assert_false(util.matches_glob("/tmp/project/main.ts", "*.md"))
   end)
 
   T.it("matches *.ts for TypeScript files", function()
@@ -31,9 +31,9 @@ T.describe("util.matches_glob", function()
 
   -- exact suffix path
   T.it("matches exact path suffix", function()
-    T.assert_true(util.matches_glob("/home/user/project/test.js", "test.js"))
-    T.assert_true(util.matches_glob("/home/user/project/src/test.js", "test.js"))
-    T.assert_false(util.matches_glob("/home/user/project/test.jsx", "test.js"))
+    T.assert_true(util.matches_glob("/tmp/project/test.js", "test.js"))
+    T.assert_true(util.matches_glob("/tmp/project/src/test.js", "test.js"))
+    T.assert_false(util.matches_glob("/tmp/project/test.jsx", "test.js"))
   end)
 
   -- edge cases
@@ -42,7 +42,7 @@ T.describe("util.matches_glob", function()
   end)
 
   T.it("matches path with dots in directory names", function()
-    T.assert_true(util.matches_glob("/home/user.cool/project/file.md", "*.md"))
+    T.assert_true(util.matches_glob("/tmp/user.cool/project/file.md", "*.md"))
   end)
 
   T.it("handles pattern with special regex chars", function()

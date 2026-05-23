@@ -46,7 +46,7 @@ test("constructPrefixSuffix includes context snippets", () => {
     },
     config,
   );
-  assert.match(result.prunedPrefix, /IDE\/LSP 定义: lib\.ts/);
+  assert.match(result.prunedPrefix, /LSP Definition: lib\.ts/);
   assert.match(result.prunedPrefix, /current file: app\.ts/);
 });
 

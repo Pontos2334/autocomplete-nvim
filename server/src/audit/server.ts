@@ -72,7 +72,7 @@ export function startAuditServer(store: IAuditStore, port: number, opts?: AuditS
 
       if (!upstreamResp.ok) {
         const text = await upstreamResp.text();
-        res.write(JSON.stringify({ type: "error", status: upstreamResp.status, message: "FIM 请求失败: " + upstreamResp.status + " " + text.slice(0, 500) }) + "\n");
+        res.write(JSON.stringify({ type: "error", status: upstreamResp.status, message: "FIM request failed: " + upstreamResp.status + " " + text.slice(0, 500) }) + "\n");
         res.end();
         return;
       }
@@ -116,7 +116,7 @@ export function startAuditServer(store: IAuditStore, port: number, opts?: AuditS
     let body = "";
     for await (const chunk of req) {
       body += chunk as string;
-      if (Buffer.byteLength(body) > 2 * 1024 * 1024) throw new Error("请求体过大");
+      if (Buffer.byteLength(body) > 2 * 1024 * 1024) throw new Error("Request body too large");
     }
     return body ? JSON.parse(body) : {};
   }

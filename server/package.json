@@ -1,7 +1,7 @@
 {
   "name": "autocomplete-nvim-server",
   "version": "0.1.0",
-  "description": "Autocomplete daemon for autocomplete.nvim",
+  "description": "DeepSeek FIM completion server for autocomplete.nvim — handles streaming, filtering, caching, and audit",
 
   "type": "module",
   "main": "dist/daemon.js",

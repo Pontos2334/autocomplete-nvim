@@ -676,19 +676,19 @@ function formatSnippets(
 function snippetLabel(kind: CodeSnippet["kind"]): string {
   switch (kind) {
     case "workspace_config":
-      return "项目配置文件";
+      return "Workspace Config";
     case "import":
-      return "Import 定义";
+      return "Import Definition";
     case "recent_edit":
-      return "最近编辑";
+      return "Recent Edit";
     case "recent_visit":
-      return "最近访问";
+      return "Recent Visit";
     case "open_buffer":
-      return "最近打开文件";
+      return "Open Buffer";
     case "lsp":
-      return "IDE/LSP 定义";
+      return "LSP Definition";
     default:
-      return "相关文件";
+      return "Related File";
   }
 }
 
