@@ -113,7 +113,7 @@ export class CompletionEngine {
     }
     if (!this.config.model.apiKey) {
       throw new Error(
-        "No API key configured. Set model.apiKey in ~/.autocomplete-nvim/config.json or DEEPSEEK_API_KEY.",
+        "No API key configured. Set model.apiKey in ~/.config/nvim/autocomplete-nvim.json or DEEPSEEK_API_KEY.",
       );
     }
     if (!supportsDeepSeekFim(this.config.model.apiBase)) {

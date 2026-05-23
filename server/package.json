@@ -2,7 +2,7 @@
   "name": "autocomplete-nvim-server",
   "version": "0.1.0",
   "description": "Autocomplete daemon for autocomplete.nvim",
-  "private": true,
+
   "type": "module",
   "main": "dist/daemon.js",
   "scripts": {

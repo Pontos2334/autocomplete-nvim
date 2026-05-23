@@ -1,8 +1,10 @@
 # autocomplete.nvim
 
-Neovim inline AI autocomplete MVP backed by a Node.js DeepSeek FIM daemon.
+Neovim inline AI autocomplete backed by a Node.js DeepSeek FIM daemon.
 
-This project is intentionally separate from `autocomplete-vscode`, but reuses its important ideas: FIM prefix/suffix construction, suffix-aware rendering, streaming SSE handling, lightweight caching, and an audit dashboard for debugging prompt and completion behavior.
+Inspired by [Continue](https://github.com/continuedev/continue) (Apache 2.0), reusing ideas including FIM prefix/suffix construction, suffix-aware rendering, streaming SSE handling, lightweight caching, and an audit dashboard.
+
+[中文文档](README.zh-CN.md)
 
 ## Features
 
@@ -11,7 +13,7 @@ This project is intentionally separate from `autocomplete-vscode`, but reuses it
 - `Ctrl-e` dismiss ghost text without moving cursor.
 - Automatic debounce trigger in insert mode.
 - Manual trigger command and keymap.
-- DeepSeek FIM support using `~/.autocomplete-nvim/config.json`.
+- DeepSeek FIM support using `~/.config/nvim/autocomplete-nvim.json`.
 - LSP/import definition snippets plus recent edit/visit, open-buffer, and workspace config snippets.
 - Audit dashboard with SQLite when available and memory fallback otherwise.
 - Request reuse, chain completion, enter/backspace trigger delays, and optional statusline state.
@@ -21,7 +23,7 @@ This project is intentionally separate from `autocomplete-vscode`, but reuses it
 
 - Neovim 0.11+
 - Node.js 20+; Node 24 is verified in this workspace
-- A DeepSeek FIM config at `~/.autocomplete-nvim/config.json`
+- A DeepSeek FIM config at `~/.config/nvim/autocomplete-nvim.json`
 
 Example config:
 
@@ -69,13 +71,14 @@ for t in tests/lua/test_*.lua; do
 done
 ```
 
-## Setup
+## Installation
 
-With lazy.nvim:
+With [lazy.nvim](https://lazy.folke.io):
 
 ```lua
 {
-  dir = "~/programming-file/autocomplete-nvim",
+  "Pontos2334/autocomplete-nvim",
+  build = "cd server && npm install && npm run build",
   config = function()
     require("autocomplete_nvim").setup({
       enabled = true,
@@ -90,6 +93,8 @@ With lazy.nvim:
 }
 ```
 
+> **Note:** Requires Node.js 20+ installed on your system. The `build` step compiles the bundled TypeScript server automatically on install.
+
 ### Configuration
 
 | Option | Default | Description |
@@ -100,7 +105,7 @@ With lazy.nvim:
 | `backspace_trigger_delay` | `180` | Delay in ms after backspace/deletion (falls back to `debounce_delay` if 0) |
 | `chain_completion_delay` | `0` | Delay in ms to trigger next completion after accepting (0 = disabled) |
 | `node_command` | `"node"` | Path to Node.js binary |
-| `config_path` | `~/.autocomplete-nvim/config.json` | Path to config file |
+| `config_path` | `~/.config/nvim/autocomplete-nvim.json` | Path to config file |
 | `keymaps.accept` | `"<Tab>"` | Accept ghost text keymap |
 | `keymaps.dismiss` | `"<C-e>"` | Dismiss ghost text keymap |
 | `keymaps.trigger` | `"<C-M-Space>"` | Manual trigger keymap |
@@ -118,7 +123,7 @@ With lazy.nvim:
 | `context.max_total_chars` | `12000` | Max chars for collected context before server-side pruning |
 | `notify` | `true` | Show notification messages |
 
-Server-side `options.showWhateverWeHaveAtMs` defaults to `0`. Set it in `~/.autocomplete-nvim/config.json` to return partial streamed content after a soft timeout.
+Server-side `options.showWhateverWeHaveAtMs` defaults to `0`. Set it in `~/.config/nvim/autocomplete-nvim.json` to return partial streamed content after a soft timeout.
 
 ### Commands
 

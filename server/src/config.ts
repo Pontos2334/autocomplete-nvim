@@ -40,7 +40,7 @@ const DEFAULT_AUDIT = {
 };
 
 function getDefaultConfigPath(): string {
-  return path.join(os.homedir(), ".autocomplete-nvim", "config.json");
+  return path.join(os.homedir(), ".config", "nvim", "autocomplete-nvim.json");
 }
 
 export function loadConfig(configPath?: string): AppConfig {
@@ -111,7 +111,7 @@ export function loadConfig(configPath?: string): AppConfig {
       options: DEFAULT_OPTIONS,
       audit: {
         ...DEFAULT_AUDIT,
-        dbPath: path.join(os.homedir(), ".autocomplete-nvim", "audit-nvim.db"),
+        dbPath: path.join(os.homedir(), ".local", "share", "nvim", "autocomplete-nvim-audit.db"),
       },
     };
   }
